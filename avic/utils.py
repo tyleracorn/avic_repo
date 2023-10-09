@@ -50,7 +50,8 @@ def rename_dir(path, src, dst):
 
     return Path(*parts)
 
-def dir_empty(path):
+
+def delete_empty_dir(path):
     """Delete empty directories recursively starting from the path supplied"""
     from pathlib import Path
     path = Path(path)
@@ -58,7 +59,7 @@ def dir_empty(path):
     for item in path.glob('*'):
         if item.is_file():
             empty = False
-        if item.is_dir() and not dir_empty(item):
+        if item.is_dir() and not delete_empty_dir(item):
             empty = False
     if empty:
         path.rmdir()  # Remove if you just want to have the result
