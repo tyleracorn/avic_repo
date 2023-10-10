@@ -2,10 +2,9 @@ from pathlib import Path
 import ffmpeg
 import copy
 import datetime
-import json
 import pandas as pd
 from tqdm.notebook import tqdm
-from .utils import get_size_format, rename_dir
+from .utils.file_utils import get_size_format, rename_dir
 
 
 def output_with_scale(video_stream, audio_stream, output_dict):
@@ -75,8 +74,6 @@ def convert_videos(videos_to_convert):
 
     Parameters
     ----------
-    converted_files_info : dict
-        dictionary of converted files info
     videos_to_convert : dict
         dictionary of videos to convert
 
@@ -119,27 +116,24 @@ def convert_videos(videos_to_convert):
             df_settings['out_vid_height'].append(out_vid_height)
 
             converted = False
-            if vid_settings['videocodex'] == 'skip':
-                videos_to_convert[subdir][vid]['status'] = 'Skipped'
 
-            else:
-                videos_to_convert[subdir][vid] = 'Converting'
-                conv_str = f"Converting: {vid_settings['videocodex']}, from {vid_settings['video_height']}"
-                conv_str += f" to {out_vid_height}"
-                videos_to_convert[subdir][vid]['status'] = conv_str
+            vid_settings['status'] = 'Converting'
+            conv_str = f"Converting: {vid_settings['videocodex']}, from {vid_settings['video_height']}"
+            conv_str += f" to {out_vid_height}"
+            videos_to_convert[subdir][vid]['status'] = conv_str
 
-                video_stream = ffmpeg.input(str(fl_in)).video
-                audio_stream = ffmpeg.input(str(fl_in)).audio
+            video_stream = ffmpeg.input(str(fl_in)).video
+            audio_stream = ffmpeg.input(str(fl_in)).audio
 
-                if out_vid_height == 480:
-                    converted = output_no_scale(video_stream,
-                                                audio_stream,
-                                                output_dict)
-                if not converted:
-                    converted = output_with_scale(video_stream,
-                                                  audio_stream,
-                                                  output_dict)
-                    conv_fl_size = output_file.stat().st_size
+            if out_vid_height == 480:
+                converted = output_no_scale(video_stream,
+                                            audio_stream,
+                                            output_dict)
+            if not converted:
+                converted = output_with_scale(video_stream,
+                                              audio_stream,
+                                              output_dict)
+                conv_fl_size = output_file.stat().st_size
             if converted:
                 conv_fl_size = output_file.stat().st_size
                 conv_dif = conv_fl_size/flsize

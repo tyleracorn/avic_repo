@@ -45,6 +45,8 @@ def rename_dir(path, src, dst):
     # convert to list so that we can change elements
     parts = list(path.parts)
 
+    src = str(src)
+    dst = str(dst)
     # replace part that matches src with dst
     parts[parts.index(src)] = dst
 

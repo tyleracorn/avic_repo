@@ -1,31 +1,8 @@
 import ffmpeg
-from .utils import get_size_format, rename_dir, delete_empty_dir
+from .file_utils import get_size_format, rename_dir, delete_empty_dir
 
 
 _video_suffixes = ['.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.mkv', '.mov', '.wmv', '.mts','.ts']
-
-
-def get_video_metadata(fl):
-    """Extract video metadata from a file
-
-    Parameters
-    ----------
-    fl : Path
-        path to video file
-
-    Returns
-    -------
-    meta : dict
-        dictionary of video metadata"""
-    info = ffmpeg.probe(fl)
-    streams = info['streams']
-    meta = {}
-    for strm in streams:
-        if strm['codec_type'] == "video":
-            meta['video'] = strm
-        elif strm['codec_type'] == "audio":
-            meta['audio'] = strm
-    return meta
 
 
 def _get_video_codec(fl):
@@ -40,15 +17,15 @@ def _get_video_codec(fl):
     -------
     str : video codec
         video codec of the file. Possible values are: ['mp4', 'avi', 'mkv', 'unknown']"""
-    if fl.suffix.lower in [".mp4", ".m4v", '.mpg', '.mpeg', '.mts', '.ts']:
+    if fl.suffix.lower() in [".mp4", ".m4v", '.mpg', '.mpeg', '.mts', '.ts']:
         return "mp4"
-    elif fl.suffix == ".avi":
+    elif fl.suffix.lower() == ".avi":
         return "avi"
-    elif fl.suffix == ".mkv":
+    elif fl.suffix.lower() == ".mkv":
         return "mkv"
-    elif fl.suffix == ".mov":
+    elif fl.suffix.lower() == ".mov":
         return "mov"
-    elif fl.suffix == ".wmv":
+    elif fl.suffix.lower() == ".wmv":
         return "wmv"
     else:
         return "unknown"
@@ -83,7 +60,7 @@ def _setup_dictionaries(vid_folder_in,
             name = fld.name
             videos_to_convert[name] = {}
             for fl in fld.glob('*'):
-                if fl.suffix in video_suffixes:
+                if fl.suffix.lower() in video_suffixes:
                     videos_to_convert[name][fl.name] = {'path': fl,
                                                         'status': 'Found'}
     return videos_to_convert
@@ -109,7 +86,7 @@ def _set_output_settings(meta: dict, vid_settings: dict, flname, vid_folder_in, 
                                           'c:v': 'libx264',
                                           'c:a': 'copy'}
 
-    if video_height == 1080:
+    if video_height >= 1080:
         convert_to = 720
         vid_settings['output']['settings']['b:v'] = '1M'
     elif video_height >= 480:
@@ -130,7 +107,30 @@ def _set_output_settings(meta: dict, vid_settings: dict, flname, vid_folder_in, 
     return vid_settings
 
 
-def parse_names_files(vid_folder_in, vid_folder_out, vid_folder_proc, video_suffixes='default'):
+def get_video_metadata(fl):
+    """Extract video metadata from a file
+
+    Parameters
+    ----------
+    fl : Path
+        path to video file
+
+    Returns
+    -------
+    meta : dict
+        dictionary of video metadata"""
+    info = ffmpeg.probe(fl)
+    streams = info['streams']
+    meta = {}
+    for strm in streams:
+        if strm['codec_type'] == "video":
+            meta['video'] = strm
+        elif strm['codec_type'] == "audio":
+            meta['audio'] = strm
+    return meta
+
+
+def parse_video_names_files(vid_folder_in, vid_folder_out, vid_folder_proc, video_suffixes='default'):
     """Parse video names and files
 
     Parameters

@@ -1,7 +1,7 @@
 from PIL import Image
 from pathlib import Path
 import pandas as pd
-from .utils import get_size_format, rename_dir
+from .utils.file_utils import get_size_format, rename_dir
 from tqdm.notebook import tqdm
 import shutil
 from PIL import UnidentifiedImageError
