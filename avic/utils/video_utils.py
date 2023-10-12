@@ -47,8 +47,7 @@ def _setup_dictionaries(vid_folder_in,
     -------
     videos_to_convert : dict
         dictionary of videos to convert in the format:
-        {subdir: {video_name: {path: Path,
-                               status: 'Found'}
+        {subdir: {video_name: {path: Path}
                   }
         }
     """
@@ -61,8 +60,7 @@ def _setup_dictionaries(vid_folder_in,
             videos_to_convert[name] = {}
             for fl in fld.glob('*'):
                 if fl.suffix.lower() in video_suffixes:
-                    videos_to_convert[name][fl.name] = {'path': fl,
-                                                        'status': 'Found'}
+                    videos_to_convert[name][fl.name] = {'path': fl}
     return videos_to_convert
 
 
