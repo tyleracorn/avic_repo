@@ -84,8 +84,13 @@ def convert_videos(videos_to_convert):
         dictionary of videos to convert
 
     """
+
+    for handler in logging.root.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
     if Path('log_file.txt').is_file():
         Path('log_file.txt').unlink()
+
     logging.basicConfig(filename='log_file.txt', level=logging.INFO)
     date_time = get_date_12hr_min()
     logging.info(f'Started Conversion: {date_time} \n')
@@ -107,9 +112,6 @@ def convert_videos(videos_to_convert):
         for vidx, vid in enumerate(tqdm(videos, desc=f"Compression: {subdir}")):
             vid_settings = videos_to_convert[subdir][vid]
 
-            conv_str = f"from {vid_settings['video_height']} to {out_vid_height}"
-            logging.info(f"{_4s}converting {vid}: {conv_str}")
-
             fl_in = copy.copy(vid_settings['path'])
             flsize = fl_in.stat().st_size
             output_dict = vid_settings['output']
@@ -118,8 +120,10 @@ def convert_videos(videos_to_convert):
             proccessed_file = copy.copy(output_dict['file_proc'])
             _make_output_dirs(output_file, proccessed_file)
             out_vid_height = output_dict['video_height']
-
             date = get_date()
+
+            conv_str = f"from {vid_settings['video_height']} to {out_vid_height}"
+            logging.info(f"{_4s}converting {vid}: {conv_str}")
 
             df_settings['name'].append(subdir)
             df_settings['source_file'].append(vid)
@@ -156,6 +160,8 @@ def convert_videos(videos_to_convert):
             else:
                 df_settings['out_size'].append('Not Converted')
                 df_settings['size_comp'].append("NA")
+                logging.info(f"{_4s}***Conversion Failed***")
+
 
             df_out = pd.DataFrame(df_settings)
             df_out.to_csv(f'converte_meta-{date}.csv')
