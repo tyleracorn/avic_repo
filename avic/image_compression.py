@@ -250,9 +250,79 @@ def get_files_to_compress(main_dir, organize_by_subdir=True, img_suffixes=['.jpg
     return files
 
 
+def _get_subdir_images_to_compress(subdir_file_dict, subdir, overwrite, starting_dir, compress_dir,
+                                   processed_dir):
+        fl_compress_dict = {}
+        files = []
+        subfiles = subdir_file_dict[subdir]['subfiles']
+        for fl in subfiles:
+            if overwrite is False:
+                comp_fl = rename_dir(fl, starting_dir, compress_dir)
+                proc_fl = rename_dir(fl, starting_dir, processed_dir)
+                if comp_fl.parent.is_dir() is False:
+                    comp_fl.parent.mkdir(parents=True)
+                if proc_fl.parent.is_dir() is False:
+                    proc_fl.parent.mkdir(parents=True)
+            else:
+                comp_fl = fl
+                proc_fl = False
+            fl_compress_dict[fl] = {'comp_fl': comp_fl, 'proc_fl': proc_fl}
+            files.append(fl)
+        return fl_compress_dict, files
+
+
+def compress_singlesubdir_images(fl_list, folder, fl_compress_dict, to_jpg, overwrite, stats_fl,
+                                 progress_bar=True):
+    compress_stats_list = []
+    if progress_bar:
+        for flid, fl in enumerate(tqdm(fl_list, desc=f'{folder}: ')):
+            comp_fl = fl_compress_dict[fl]['comp_fl']
+            proc_fl = fl_compress_dict[fl]['proc_fl']
+            stats = compress_img(fl,
+                                new_size_ratio='auto',
+                                quality='auto',
+                                width=None,
+                                height=None,
+                                to_jpg=to_jpg,
+                                export_path=comp_fl,
+                                proc_path=proc_fl,
+                                overwrite=overwrite)
+            compress_stats_list.append(stats)
+
+            compress_stats = pd.concat(compress_stats_list, ignore_index=True)
+            if len(compress_stats) > 0:
+                if stats_fl is not False:
+                    compress_stats.to_csv(stats_fl)
+            else:
+                compress_stats = False
+    else:
+        #print(f"Compressing {folder}")
+        for flid, fl in enumerate(fl_list):
+            comp_fl = fl_compress_dict[fl]['comp_fl']
+            proc_fl = fl_compress_dict[fl]['proc_fl']
+            stats = compress_img(fl,
+                                new_size_ratio='auto',
+                                quality='auto',
+                                width=None,
+                                height=None,
+                                to_jpg=to_jpg,
+                                export_path=comp_fl,
+                                proc_path=proc_fl,
+                                overwrite=overwrite)
+            compress_stats_list.append(stats)
+
+            compress_stats = pd.concat(compress_stats_list, ignore_index=True)
+            if len(compress_stats) > 0:
+                if stats_fl is not False:
+                    compress_stats.to_csv(stats_fl)
+            else:
+                compress_stats = False
+    return compress_stats
+
 def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compressed',
                           processed_dir='processed', img_suffixes=['.jpg', 'jpeg', '.png'],
-                          stats_fl='compression_stats.csv', to_jpg=True, overwrite=False):
+                          stats_fl='compression_stats.csv', to_jpg=True, overwrite=False,
+                          subdir_progress_bar=True):
     """
     Compress all images in a directory and save them to a new directory.
 
@@ -286,46 +356,92 @@ def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compress
         any file that doesn't match these suffixes will be ignored.
     """
     compress_stats_list = []
-
-    files_to_compress = {}
     folders = list(subdir_file_dict.keys())
     for fidx, folder in enumerate(tqdm(folders, desc='Total Compression')):
-        files_to_compress = {}
-        files = []
-        subfiles = subdir_file_dict[folder]['subfiles']
-        for fl in subfiles:
-            if overwrite is False:
-                comp_fl = rename_dir(fl, starting_dir, compress_dir)
-                proc_fl = rename_dir(fl, starting_dir, processed_dir)
-                if comp_fl.parent.is_dir() is False:
-                    comp_fl.parent.mkdir(parents=True)
-                if proc_fl.parent.is_dir() is False:
-                    proc_fl.parent.mkdir(parents=True)
-            else:
-                comp_fl = fl
-                proc_fl = False
-            files_to_compress[fl] = {'comp_fl': comp_fl, 'proc_fl': proc_fl}
-            files.append(fl)
+        fl_compress_dict, fl_list = _get_subdir_images_to_compress(subdir_file_dict,
+                                                                    folder,
+                                                                    overwrite,
+                                                                    starting_dir,
+                                                                    compress_dir,
+                                                                    processed_dir)
 
-        for flid, fl in enumerate(tqdm(files, desc=f'{folder}: ')):
-            comp_fl = files_to_compress[fl]['comp_fl']
-            proc_fl = files_to_compress[fl]['proc_fl']
-            stats = compress_img(fl,
-                                 new_size_ratio='auto',
-                                 quality='auto',
-                                 width=None,
-                                 height=None,
-                                 to_jpg=to_jpg,
-                                 export_path=comp_fl,
-                                 proc_path=proc_fl,
-                                 overwrite=overwrite)
-            compress_stats_list.append(stats)
+        compress_stats = compress_singlesubdir_images(fl_list,
+                                                      folder,
+                                                      fl_compress_dict,
+                                                      to_jpg=to_jpg,
+                                                      overwrite=overwrite,
+                                                      stats_fl=stats_fl,
+                                                      progress_bar=subdir_progress_bar)
+        compress_stats_list.append(compress_stats)
+        compress_stats = pd.concat(compress_stats_list, ignore_index=True)
+        if len(compress_stats) > 0:
+            if stats_fl is not False:
+                compress_stats.to_csv(stats_fl)
+        else:
+            compress_stats = False
 
-            compress_stats = pd.concat(compress_stats_list, ignore_index=True)
-            if len(compress_stats) > 0:
-                if stats_fl is not False:
-                    compress_stats.to_csv(stats_fl)
-            else:
-                compress_stats = False
+    return compress_stats
+
+
+def compress_files_subdir_notqdm(subdir_file_dict, starting_dir, compress_dir='compressed',
+                                 processed_dir='processed', img_suffixes=['.jpg', 'jpeg', '.png'],
+                                 stats_fl='compression_stats.csv', to_jpg=True, overwrite=False):
+    """
+    Compress all images in a directory and save them to a new directory.
+
+    nuances:
+    starting_dir is the directory where the files are located. The compressed_dir is used
+    to rename the file path. For example, if the file is located in 'images/2020/01/01/image.jpg'
+    and the compressed_dir is 'compressed', then the new file path will be
+    'compressed/2020/01/01/image.jpg'
+
+    same goes for the processed_dir.
+
+    warning. the rename function will rename all matching strings in the path. For example,
+    if the starting_dir is 'images' and it shows up twice in the path, then it will rename
+    both of them. for example, if the file is located in 'images/2020/01/01/images/image.jpg'
+    and the starting_dir is 'images', then the new file path will be
+    'compressed/2020/01/01/compressed/image.jpg'
+
+    Parameters
+    ----------
+    subdir_file_dict : dict
+        dictionary of subdirectories and files to compress. This is the output of
+        get_files_to_compress
+    starting_dir : str
+        directory where the files are located
+    compress_dir : str, optional
+        directory where the compressed files will be saved. The default is 'compressed'.
+    processed_dir : str, optional
+        directory where the processed files will be saved. The default is 'processed'.
+    img_suffixes : list, optional
+        list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
+        any file that doesn't match these suffixes will be ignored.
+    """
+    compress_stats_list = []
+    folders = list(subdir_file_dict.keys())
+    for fidx, folder in enumerate(folders):
+        fl_compress_dict, fl_list = _get_subdir_images_to_compress(subdir_file_dict,
+                                                                    folder,
+                                                                    overwrite,
+                                                                    starting_dir,
+                                                                    compress_dir,
+                                                                    processed_dir)
+
+        compress_stats = compress_singlesubdir_images(fl_list,
+                                                      folder,
+                                                      fl_compress_dict,
+                                                      to_jpg=to_jpg,
+                                                      overwrite=overwrite,
+                                                      stats_fl=stats_fl,
+                                                      progress_bar=False)
+
+        compress_stats_list.append(compress_stats)
+        compress_stats = pd.concat(compress_stats_list, ignore_index=True)
+        if len(compress_stats) > 0:
+            if stats_fl is not False:
+                compress_stats.to_csv(stats_fl)
+        else:
+            compress_stats = False
 
     return compress_stats
