@@ -99,6 +99,7 @@ def zip_manga_dir(zdir, filename=None, as_cbz=False, delete_dir=False):
     """
     import zipfile
     import shutil
+    from pathlib import Path
     zdir = Path(zdir)
     if filename is None:
         filename = zdir
