@@ -79,7 +79,7 @@ def unzip_file(file, extract_dir=None):
         extract to another directory. by default False"""
     import zipfile
     with zipfile.ZipFile(file, "r") as zip_ref:
-        zip_ref.extractall(patn=extract_dir)
+        zip_ref.extractall(path=extract_dir)
 
 
 def zip_manga_dir(zdir, filename=None, as_cbz=False, delete_dir=False):

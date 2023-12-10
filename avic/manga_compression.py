@@ -1,3 +1,5 @@
+from pathlib import Path
+from .utils.file_utils import get_size_format
 
 def _new_output_zfile(zfile, manga_dir, save_dir, words_to_drop=['[English]', '[Digital]', '(English)'],
                       save_cbz=True):
@@ -18,7 +20,7 @@ def _new_output_zfile(zfile, manga_dir, save_dir, words_to_drop=['[English]', '[
     save_cbz : bool, optional
         save as zip file renamed to cbz for comic readers, by default True
     """
-    from .utils import rename_dir
+    from .utils.file_utils import rename_dir
     new_zfl = rename_dir(zfile,
                          src=str(manga_dir),
                          dst=str(save_dir))
@@ -54,7 +56,7 @@ def _get_manga_unzip_dir(new_zipfile, save_dir, interim_dir):
     interim_dir : Path
         path to the interim directory where the manga files will be extracted to
     """
-    from .utils import rename_dir
+    from .utils.file_utils import rename_dir
     manga_int_dir = rename_dir(new_zipfile,
                                src=str(save_dir),
                                dst=str(interim_dir))
@@ -113,7 +115,7 @@ def get_zip_file_dicts(manga_dir, interim_dir, save_dir, manga_suffixes=['.zip',
 
 def compress_manga_images(manga_dir, interim_dir, save_dir, manga_suffixes=['.zip', '.cbz'],
                           words_to_drop=['[English]', '[Digital]', '(English)'], save_cbz=True,
-                          delete_interim=True):
+                          delete_interim=True, compression_stats_fl='manga_compression_stats.csv'):
     """
     Compress manga images in a zip file to a new zip file in a new directory.
     The new zip file will be renamed to the original zip file name but with the words_to_drop removed.
@@ -137,27 +139,52 @@ def compress_manga_images(manga_dir, interim_dir, save_dir, manga_suffixes=['.zi
     delete_interim : bool, optional
         delete the interim directory after the compression is complete, by default True
     """
-    from .utils import unzip_file, zip_manga_dir
+    from .utils.file_utils import unzip_file, zip_manga_dir
     from .image_compression import get_files_to_compress, compress_files_subdir
+    print(f"Getting manga files and building dictionary")
     zfile_dict = get_zip_file_dicts(manga_dir,
                                     interim_dir,
                                     save_dir,
                                     manga_suffixes=manga_suffixes,
                                     words_to_drop=words_to_drop,
                                     save_cbz=save_cbz)
+    print(f"Unzipping {len(zfile_dict)} manga files")
     for zfile in zfile_dict:
-        unzip_file(zfile, add_zip_suffix=True)
+        unzip_file(zfile, extract_dir=zfile_dict[zfile]['manga_interim_dir'])
 
+    print(f"  Compressing {len(zfile_dict)} manga files")
     compress_files_dict = get_files_to_compress(interim_dir)
 
-    cstats = compress_files_subdir(compress_files_dict,
-                                   starting_dir=interim_dir,
-                                   to_jpg=False,
-                                   overwrite=True)
+    _ = compress_files_subdir(compress_files_dict,
+                              starting_dir=interim_dir,
+                              to_jpg=False,
+                              overwrite=True)
 
+    zcomp_stats_list = []
+    print(f"  Zipping {len(zfile_dict)} manga files")
     for zfile in zfile_dict:
 
         zip_manga_dir(zdir=zfile_dict[zfile]['manga_interim_dir'],
                       filename=zfile_dict[zfile]['save_file'],
                       as_cbz=save_cbz,
                       delete_dir=delete_interim)
+
+        old_size = zfile.stat().st_size
+        new_size = zfile_dict[zfile]['save_file'].stat().st_size
+        if old_size == new_size:
+            saving_diff_str = '--'
+        else:
+            saving_diff = (old_size - new_size)/old_size
+            saving_diff_str = f"{saving_diff:.1%}"
+
+        results = pd.DataFrame({'Manga': [zfile.stem],
+                                'Manga_size': [get_size_format(old_size)],
+                                'New_size': [get_size_format(new_size)],
+                                'Compress %': [saving_diff_str],
+                                    })
+        zcomp_stats_list.append(results)
+        if compression_stats_fl is not None or compression_stats_fl is not False:
+            zcomp_stats = pd.concat(zcomp_stats_list, ignore_index=True)
+            zcomp_stats.to_csv(compression_stats_fl, index=False)
+
+    return outstats
