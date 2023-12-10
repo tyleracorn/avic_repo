@@ -66,3 +66,53 @@ def delete_empty_dir(path):
     if empty:
         path.rmdir()  # Remove if you just want to have the result
     return empty
+
+
+def unzip_file(file, extract_dir=None):
+    """Unzip file. If extract_dir is False, then extract to the same directory as the file.
+
+    Parameters
+    ----------
+    file : Path
+        path to file to unzip
+    extract_dir : bool, optional
+        extract to another directory. by default False"""
+    import zipfile
+    with zipfile.ZipFile(file, "r") as zip_ref:
+        zip_ref.extractall(patn=extract_dir)
+
+
+def zip_manga_dir(zdir, filename=None, as_cbz=False, delete_dir=False):
+    """Zip manga directory into a manga zip file. If as_cbz is True, then save as a cbz file.
+
+    Parameters
+    ----------
+    zdir : Path
+        path to manga directory
+    filename : str, optional
+        name of zip file, by default None in which case the name of the zip file will be the same
+        as the directory
+    as_cbz : bool, optional
+        save as cbz file, by default False
+    delete_dir : bool, optional
+        delete the directory after zipping, by default False
+    """
+    import zipfile
+    import shutil
+    zdir = Path(zdir)
+    if filename is None:
+        filename = zdir
+    else:
+        filename = Path(filename)
+    if as_cbz:
+        filename = filename.with_suffix('.cbz')
+    else:
+        filename = filename.with_suffix('.zip')
+
+    assert zdir.is_dir(), f"{zdir} is not a directory"
+    with zipfile.ZipFile(filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for entry in zdir.rglob("*"):
+            zipf.write(entry, entry.relative_to(zdir))
+
+    if delete_dir:
+        shutil.rmtree(zdir)

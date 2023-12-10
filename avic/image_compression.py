@@ -108,7 +108,7 @@ def _get_quality(quality, image_size):
 
 
 def compress_img(image_path, new_size_ratio='auto', quality='auto', width=None, height=None,
-                 to_jpg=True, export_path=False, proc_path=False):
+                 to_jpg=True, export_path=False, proc_path=False, overwrite=False):
     """Compression function that given an image path, it will compress the image to try to
     save space. It will return a dataframe with the results of the compression.
 
@@ -132,10 +132,14 @@ def compress_img(image_path, new_size_ratio='auto', quality='auto', width=None, 
         path to move the original image to after it's been processed. The default is False.
     """
     fl_dir = image_path.parent
-    if proc_path is False:
-        proc_path = fl_dir.joinpath('processed', image_path.name)
-    if export_path is False:
-        export_path = fl_dir.joinpath('compressed', image_path.name)
+    if overwrite is True:
+        export_path = image_path
+        proc_path = False
+    else:
+        if proc_path is False:
+            proc_path = fl_dir.joinpath('processed', image_path.name)
+        if export_path is False:
+            export_path = fl_dir.joinpath('compressed', image_path.name)
 
     if to_jpg:
         export_path = export_path.with_suffix('.jpg')
@@ -162,7 +166,8 @@ def compress_img(image_path, new_size_ratio='auto', quality='auto', width=None, 
                 status = 'NOT Compressed'
                 compress = False
                 new_image_size = image_size
-                shutil.copy(image_path, export_path)
+                if overwrite is False:
+                    shutil.copy(image_path, export_path)
             while compress is True and attempts < 3:
                 attempts += 1
                 new_image_size = _compress_save(img,
@@ -200,7 +205,8 @@ def compress_img(image_path, new_size_ratio='auto', quality='auto', width=None, 
                                     'Attempts': [attempts],
                                     })
         if status != 'Failed':
-            image_path.rename(proc_path)
+            if proc_path is not False:
+                image_path.rename(proc_path)
     except UnidentifiedImageError:
         results = pd.DataFrame({'Image': [image_path],
                                 'Image_size': ['-'],
@@ -239,14 +245,14 @@ def get_files_to_compress(main_dir, organize_by_subdir=True, img_suffixes=['.jpg
                                   'subfiles': subfiles}
     else:
         files = [fl for fl in Path(main_dir).rglob('*') if fl.is_file()]
-        files = [fl for fl in subfiles if fl.suffix.lower() in img_suffixes]
+        files = [fl for fl in files if fl.suffix.lower() in img_suffixes]
 
     return files
 
 
 def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compressed',
                           processed_dir='processed', img_suffixes=['.jpg', 'jpeg', '.png'],
-                          stats_fl='compression_stats.csv'):
+                          stats_fl='compression_stats.csv', to_jpg=True, overwrite=False):
     """
     Compress all images in a directory and save them to a new directory.
 
@@ -279,7 +285,7 @@ def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compress
         list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
         any file that doesn't match these suffixes will be ignored.
     """
-    compress_stats = []
+    compress_stats_list = []
 
     files_to_compress = {}
     folders = list(subdir_file_dict.keys())
@@ -288,12 +294,16 @@ def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compress
         files = []
         subfiles = subdir_file_dict[folder]['subfiles']
         for fl in subfiles:
-            comp_fl = rename_dir(fl, starting_dir, compress_dir)
-            proc_fl = rename_dir(fl, starting_dir, processed_dir)
-            if comp_fl.parent.is_dir() is False:
-                comp_fl.parent.mkdir(parents=True)
-            if proc_fl.parent.is_dir() is False:
-                proc_fl.parent.mkdir(parents=True)
+            if overwrite is False:
+                comp_fl = rename_dir(fl, starting_dir, compress_dir)
+                proc_fl = rename_dir(fl, starting_dir, processed_dir)
+                if comp_fl.parent.is_dir() is False:
+                    comp_fl.parent.mkdir(parents=True)
+                if proc_fl.parent.is_dir() is False:
+                    proc_fl.parent.mkdir(parents=True)
+            else:
+                comp_fl = fl
+                proc_fl = False
             files_to_compress[fl] = {'comp_fl': comp_fl, 'proc_fl': proc_fl}
             files.append(fl)
 
@@ -305,16 +315,17 @@ def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compress
                                  quality='auto',
                                  width=None,
                                  height=None,
-                                 to_jpg=True,
+                                 to_jpg=to_jpg,
                                  export_path=comp_fl,
-                                 proc_path=proc_fl)
-            compress_stats.append(stats)
-    if len(compress_stats) > 0:
-        compress_stats = pd.concat(compress_stats, ignore_index=True)
+                                 proc_path=proc_fl,
+                                 overwrite=overwrite)
+            compress_stats_list.append(stats)
 
-        if stats_fl is not False:
-            compress_stats.to_csv(stats_fl)
-    else:
-        compress_stats = False
+            compress_stats = pd.concat(compress_stats_list, ignore_index=True)
+            if len(compress_stats) > 0:
+                if stats_fl is not False:
+                    compress_stats.to_csv(stats_fl)
+            else:
+                compress_stats = False
 
     return compress_stats
