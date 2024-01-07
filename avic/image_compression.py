@@ -5,260 +5,236 @@ from .utils.file_utils import get_size_format, rename_dir
 from tqdm.notebook import tqdm
 import shutil
 from PIL import UnidentifiedImageError
+import logging
 
 
-def _compress_save(img, width, height, quality, exp_fl):
+_s = ' '
+_s2 = _s*2
+_s4 = _s*4
+_s6 = _s*6
+
+
+def get_files_to_compress_recursive(main_dir, img_suffixes=['.jpg', '.jpeg', '.png']):
     """
-    Given the new width, height, and quality. Re-size and export an image to the
-    exp_fl path then returns the size of the newly compressed image
+    get list of image files to compress from a directory, also get all subdirectories
+    that can then be used to iterate through all subdirectories
 
     Parameters
     ----------
-    image
-        pillow loaded image object
-    width
-        new width. if False then it won't try to resize
-    height
-        new_height. if False then it won't try to resize
-    quality
-        export quality
-    exp_fl
-        export filename path
+    main_dir : str
+        directory to search for files
+    img_suffixes : list, optional
+        list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
 
     Returns
     -------
-        new image file size
+    files: list
+        list of files
+    sub_directories: list
+        list of subdirectories
     """
-    if width is False or height is False:
-        compress_img = img
-    else:
-        try:
-            compress_img = img.resize((width, height), Image.LANCZOS)
-        except OSError:
-            return False
-    try:
-        # save the image with the corresponding quality and optimize set to True
-        compress_img.save(exp_fl, quality=quality, optimize=True)
-    except OSError:
-        try:
-            # convert the image to RGB mode first
-            compress_img = img.convert("RGB")
-            # save the image with the corresponding quality and optimize set to True
-            compress_img.save(exp_fl, quality=quality, optimize=True)
-        except OSError:
-            return False
-    return exp_fl.stat().st_size
+    sub_directories = [folder for folder in Path(main_dir).glob('*') if folder.is_dir()]
+    files = []
+    files = [fl for fl in main_dir.glob('*') if fl.is_file()]
+    files = [fl for fl in files if fl.suffix.lower() in img_suffixes]
+
+    return files, sub_directories
 
 
-def _get_new_width_height(new_size_ratio, image_w, image_h):
-    """
-    Determine a new width and height based on new_size_ratio
-    if new_size_ratio is 'auto' then it will determine the new_size_ratio based on the
-    image size.
-
-    Parameters
-    ----------
-    new_size_ratio : float
-        ratio to resize the image
-    image_w : int
-        image width
-    image_h : int
-        image height
-    """
-    if new_size_ratio == 'auto':
-        if image_h > 1200:
-            if image_h > 3000 or image_w > 3000:
-                new_size_ratio = 0.5
-            else:
-                new_size_ratio = 0.7
-        else:
-            new_size_ratio = 1
-    if new_size_ratio < 1.0:
-        # if resizing ratio is below 1.0, then multiply width & height with this ratio
-        # to reduce image size
-        new_w = int(image_w * new_size_ratio)
-        new_h = int(image_h * new_size_ratio)
-    else:
-        new_w = False
-        new_h = False
-    return new_w, new_h, new_size_ratio
-
-
-def _get_quality(quality, image_size):
-    """
-    Determine export quality based on image filesize
-
-    Parameters
-    ----------
-    quality : int (0 to 100)
-        quality to export image
-    image_size : int
-        image filesize
-    """
-    # determine quality
-    if quality == 'auto':
-        if image_size > 1100000:  # 1.05MB
-            if image_size > 10000000:  # 9.54MB
-                quality = 70
-            else:
-                quality = 80
-        else:
-            quality = 90
-    return quality
-
-
-def compress_img(image_path, new_size_ratio='auto', quality='auto', width=None, height=None,
-                 to_jpg=True, export_path=False, proc_path=False, overwrite=False):
-    """Compression function that given an image path, it will compress the image to try to
-    save space. It will return a dataframe with the results of the compression.
-
-    Parameters
-    ----------
-    image_path : str
-        path to the image file
-    new_size_ratio : float, optional
-        ratio to resize the image. The default is 'auto'.
-    quality : int, optional
-        quality of the image. The default is 'auto'.
-    width : int, optional
-        width of the image. The default is None.
-    height : int, optional
-        height of the image. The default is None.
-    to_jpg : bool, optional
-        if True, then it will export the image as a jpg. The default is True.
-    export_path : str, optional
-        path to export the compressed image. The default is False.
-    proc_path : str, optional
-        path to move the original image to after it's been processed. The default is False.
-    """
-    fl_dir = image_path.parent
-    if overwrite is True:
-        export_path = image_path
-        proc_path = False
-    else:
-        if proc_path is False:
-            proc_path = fl_dir.joinpath('processed', image_path.name)
-        if export_path is False:
-            export_path = fl_dir.joinpath('compressed', image_path.name)
-
-    if to_jpg:
-        export_path = export_path.with_suffix('.jpg')
-    # load the image to memory
-    try:
-        with Image.open(image_path) as img:
-
-            # Get stats
-            image_size = image_path.stat().st_size
-            image_w, image_h = img.size
-
-            # Determine if you need a new size
-            new_w, new_h, new_size_ratio = _get_new_width_height(new_size_ratio,
-                                                                 image_w,
-                                                                 image_h)
-            # determine quality
-            quality = _get_quality(quality,
-                                   image_size)
-
-            compress = True
-            attempts = 0
-            if image_size < 200000:
-                # Don't try to compress if it's under '195.31KB'
-                status = 'NOT Compressed'
-                compress = False
-                new_image_size = image_size
-                if overwrite is False:
-                    shutil.copy(image_path, export_path)
-            while compress is True and attempts < 3:
-                attempts += 1
-                new_image_size = _compress_save(img,
-                                                new_w,
-                                                new_h,
-                                                quality,
-                                                export_path)
-                status = 'Compressed'
-                if new_image_size is False:
-                    # if the image can't be resized then don't try to compress it
-                    status = 'Failed'
-                    compress = False
-                    new_image_size = image_size
-                elif new_image_size > 5000000:  # '4.77MB'
-                    new_size_ratio -= 10
-                    new_w, new_h, new_size_ratio = _get_new_width_height(new_size_ratio,
-                                                                         image_w,
-                                                                         image_h)
-                    quality -= 10
-                elif new_image_size > 2000000:  # '1.91MB'
-                    quality -= 10
-                else:
-                    compress = False
-            # Calculate Saving Diff
-            if new_image_size == image_size:
-                saving_diff_str = '-'
-            else:
-                saving_diff = (image_size - new_image_size)/image_size
-                saving_diff_str = f"{saving_diff:.1%}"
-            results = pd.DataFrame({'Image': [image_path],
-                                    'Image_size': [get_size_format(image_size)],
-                                    'Status': [status],
-                                    'New_size': [get_size_format(new_image_size)],
-                                    'Compress %': [saving_diff_str],
-                                    'Attempts': [attempts],
-                                    })
-        if status != 'Failed':
-            if proc_path is not False:
-                image_path.rename(proc_path)
-    except UnidentifiedImageError:
-        results = pd.DataFrame({'Image': [image_path],
-                                'Image_size': ['-'],
-                                'Status': ['Failed'],
-                                'New_size': ['-'],
-                                'Compress %': ['-'],
-                                'Attempts': [0],
-                                })
-    return results
-
-
-def get_files_to_compress(main_dir, organize_by_subdir=True, img_suffixes=['.jpg', '.jpeg', '.png']):
+def _get_subdir_images_to_compress(subdir_file_dict, subdir, overwrite, starting_dir, compress_dir,
+                                   processed_dir):
     """
     get list of image files to compress from a directory. This will iterate through all
     subdirectories
 
     Parameters
     ----------
-    main_dir : str
-        directory to search for files
-    organize_by_subdir : bool, optional
-        if True, then it will return a dictionary of files organized by the tope subdirectories.
-        if False it will return a list of all image files in all subdirectories.
-        The default is True.
-    img_suffixes : list, optional
-        list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
+    subdir_file_dict : dict
+        dictionary of subdirectories and files to compress. This is the output of
+        get_files_to_compress
+    subdir : str
+        subdirectory to compress
+    overwrite : bool
+        if True, then it will overwrite the original file
+    starting_dir : str
+        directory where the files are located
+    compress_dir : str, optional
+        directory where the compressed files will be saved. The default is 'compressed'.
+    processed_dir : str, optional
+        directory where the processed files will be moved to. The default is 'processed'.
 
     """
-    if organize_by_subdir:
-        sub_directories = [folder for folder in Path(main_dir).glob('*') if folder.is_dir()]
-        files = {}
-        for folder in sub_directories:
-            subfiles = [fl for fl in folder.rglob('*') if fl.is_file()]
-            subfiles = [fl for fl in subfiles if fl.suffix.lower() in img_suffixes]
-            files[folder.name] = {'folder': folder,
-                                  'subfiles': subfiles}
-    else:
-        files = [fl for fl in Path(main_dir).rglob('*') if fl.is_file()]
-        files = [fl for fl in files if fl.suffix.lower() in img_suffixes]
+    fl_compress_dict = {}
+    files = []
+    subfiles = subdir_file_dict[subdir]['subfiles']
+    for fl in subfiles:
+        if overwrite is False:
+            comp_fl = rename_dir(fl, starting_dir, compress_dir)
+            proc_fl = rename_dir(fl, starting_dir, processed_dir)
+            if comp_fl.parent.is_dir() is False:
+                comp_fl.parent.mkdir(parents=True)
+            if proc_fl.parent.is_dir() is False:
+                proc_fl.parent.mkdir(parents=True)
+        else:
+            comp_fl = fl
+            proc_fl = False
+        fl_compress_dict[fl] = {'comp_fl': comp_fl, 'proc_fl': proc_fl}
+        files.append(fl)
+    return fl_compress_dict, files
 
-    return files
 
+class MultiImageCompression():
+    def __init__(self,
+                 img_suffixes=['.jpg', 'jpeg', '.png'], stats_fl='compression_stats.csv',
+                 to_jpg=True, overwrite=False, log_file='log.txt'):
+        """
+        Compress all images in a directory and save them to a new directory.
 
-def _get_subdir_images_to_compress(subdir_file_dict, subdir, overwrite, starting_dir, compress_dir,
-                                   processed_dir):
+        nuances:
+        starting_dir is the directory where the files are located. The compressed_dir is used
+        to rename the file path. For example, if the file is located in
+        'images/2020/01/01/image.jpg' and the compressed_dir is 'compressed', then the new file
+        path will be 'compressed/2020/01/01/image.jpg'
+
+        same goes for the processed_dir.
+
+        warning. the rename function will rename all matching strings in the path. For example,
+        if the starting_dir is 'images' and it shows up twice in the path, then it will rename
+        both of them. for example, if the file is located in 'images/2020/01/01/images/image.jpg'
+        and the starting_dir is 'images', then the new file path will be
+        'compressed/2020/01/01/compressed/image.jpg'
+
+        Parameters
+        ----------
+        subdir_file_dict : dict
+            dictionary of subdirectories and files to compress. This is the output of
+            get_files_to_compress
+        starting_dir : str
+            directory where the files are located
+        compress_dir : str, optional
+            directory where the compressed files will be saved. The default is 'compressed'.
+        processed_dir : str, optional
+            directory where the processed files will be saved. The default is 'processed'.
+        img_suffixes : list, optional
+            list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
+            any file that doesn't match these suffixes will be ignored.
+
+        Outline
+        -------
+        1. get list of files to compress
+        2. compress files
+            2a. get new size ratio
+            2b. get quality
+            2c. compress image
+            2d. check if new image size is less than old image size
+            2e. if new image size is less than old image size, then save the image
+            2f. if new image size is greater than old image size, then try to compress again
+        3. save compression stats
+        """
+        self.starting_dir = False
+        self.compress_dir = False
+        self.processed_dir = False
+        self.img_suffixes = img_suffixes
+        self.stats_fl = stats_fl
+        self.to_jpg = to_jpg
+        self.overwrite = overwrite
+        self.log_file = log_file
+
+        self.image_compressor = ImageCompress(new_size_ratio='auto', quality='auto',
+                                              to_jpg=self.to_jpg, n_attemps=3,
+                                              log_file=False)
+
+        # Setup the logger for the class
+        if Path(log_file).is_file() is True:
+            Path(log_file).unlink()
+        self.logger = logging.getLogger('MultiImageCompression')
+        self.logger.setLevel(logging.INFO)
+        self.image_compressor._set_external_logger(self.logger)
+
+    def _add_log_handler(self, log_file):
+        """Add the log file handler to the logger"""
+        # setup a file logger format so that it formats the messages to include log level,
+        # class name, function name, and function arguments
+        self.logger.info(f"Adding log handler for {log_file}")
+        formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
+
+        self._remove_log_handler(log_file)
+        fh = logging.FileHandler(log_file)
+        fh.setFormatter(formatter)
+        self.logger.addHandler(fh)
+
+    def _remove_log_handler(self, log_file):
+        """Remove the log file handler from the logger"""
+        self.logger.info(f"Removing log handler for {log_file}")
+        handlers = self.logger.handlers[:]
+        for handler in handlers:
+            if log_file in handler.baseFilename:
+                handler.close()
+                self.logger.removeHandler(handler)
+
+    def close_logger(self):
+        """Close all handlers in the logger"""
+        self.logger.info("Closing logger")
+        handlers = self.logger.handlers[:]
+        for handler in handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
+    def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed'):
+        """
+        Set the directories for the image compression
+
+        nuances:
+        starting_dir is the directory where the files are located. The compressed_dir is used
+        to rename the file path. For example, if the file is located in
+        'images/2020/01/01/image.jpg' and the compressed_dir is 'compressed', then the new file
+        path will be 'compressed/2020/01/01/image.jpg'
+
+        same goes for the processed_dir.
+
+        warning. the rename function will rename all matching strings in the path. For example,
+        if the starting_dir is 'images' and it shows up twice in the path, then it will rename
+        both of them. for example, if the file is located in 'images/2020/01/01/images/image.jpg'
+        and the starting_dir is 'images', then the new file path will be
+        'compressed/2020/01/01/compressed/image.jpg'
+
+        Parameters
+        ----------
+        starting_dir : str
+            directory where the files are located
+        compress_dir : str, optional
+            directory where the compressed files will be saved. The default is 'compressed'.
+        processed_dir : str, optional
+            directory where the processed files will be saved. The default is 'processed'.
+        """
+        self.starting_dir = Path(starting_dir)
+        self.compress_dir = Path(compress_dir)
+        self.processed_dir = Path(processed_dir)
+        self.logger.info(f"starting_dir: {self.starting_dir}")
+        self.logger.info(f"compress_dir: {self.compress_dir}")
+        self.logger.info(f"processed_dir: {self.processed_dir}")
+
+    def _get_compress_paths(self, files):
+        """
+        get list of image files to compress from a directory. This will iterate through all
+        subdirectories
+
+        Parameters
+        ----------
+        files : list
+            list of files to compress
+
+        """
+        self.logger.info(f"Getting compress paths for {len(files)} files")
         fl_compress_dict = {}
-        files = []
-        subfiles = subdir_file_dict[subdir]['subfiles']
-        for fl in subfiles:
-            if overwrite is False:
-                comp_fl = rename_dir(fl, starting_dir, compress_dir)
-                proc_fl = rename_dir(fl, starting_dir, processed_dir)
+        for fl in files:
+            if self.overwrite is False:
+                comp_fl = rename_dir(fl,
+                                     self.starting_dir,
+                                     self.compress_dir)
+                proc_fl = rename_dir(fl,
+                                     self.starting_dir,
+                                     self.processed_dir)
                 if comp_fl.parent.is_dir() is False:
                     comp_fl.parent.mkdir(parents=True)
                 if proc_fl.parent.is_dir() is False:
@@ -266,182 +242,388 @@ def _get_subdir_images_to_compress(subdir_file_dict, subdir, overwrite, starting
             else:
                 comp_fl = fl
                 proc_fl = False
-            fl_compress_dict[fl] = {'comp_fl': comp_fl, 'proc_fl': proc_fl}
-            files.append(fl)
-        return fl_compress_dict, files
+            fl_compress_dict[fl.name] = {'fl': fl,
+                                         'comp_fl': comp_fl,
+                                         'proc_fl': proc_fl}
+        return fl_compress_dict
 
+    def _compress_singlesubdir_images(self, files, folder_name, progress_bar=True):
+        """
+        compress the files in a subdirectory
 
-def compress_singlesubdir_images(fl_list, folder, fl_compress_dict, to_jpg, overwrite, stats_fl,
-                                 progress_bar=True):
-    compress_stats_list = []
-    if progress_bar:
-        for flid, fl in enumerate(tqdm(fl_list, desc=f'{folder}: ')):
-            comp_fl = fl_compress_dict[fl]['comp_fl']
-            proc_fl = fl_compress_dict[fl]['proc_fl']
-            stats = compress_img(fl,
-                                new_size_ratio='auto',
-                                quality='auto',
-                                width=None,
-                                height=None,
-                                to_jpg=to_jpg,
-                                export_path=comp_fl,
-                                proc_path=proc_fl,
-                                overwrite=overwrite)
-            compress_stats_list.append(stats)
+        Parameters
+        ----------
+        files : list
+            list of files to compress
+        folder_name : str
+            name of the subdirectory which is used in the progress bar if progress_bar is True
+        progress_bar : bool, optional
+            if True, then it will show a progress bar. The default is True.
+        """
+        self.logger.info((f"Compressing {len(files)} files in {folder_name}. "
+                          f"progress_bar={progress_bar}"))
+        compres_stats_list = []
+        comp_paths = self._get_compress_paths(files)
 
-            compress_stats = pd.concat(compress_stats_list, ignore_index=True)
-            if len(compress_stats) > 0:
-                if stats_fl is not False:
-                    compress_stats.to_csv(stats_fl)
-            else:
-                compress_stats = False
-    else:
-        #print(f"Compressing {folder}")
-        for flid, fl in enumerate(fl_list):
-            comp_fl = fl_compress_dict[fl]['comp_fl']
-            proc_fl = fl_compress_dict[fl]['proc_fl']
-            stats = compress_img(fl,
-                                new_size_ratio='auto',
-                                quality='auto',
-                                width=None,
-                                height=None,
-                                to_jpg=to_jpg,
-                                export_path=comp_fl,
-                                proc_path=proc_fl,
-                                overwrite=overwrite)
-            compress_stats_list.append(stats)
-
-            compress_stats = pd.concat(compress_stats_list, ignore_index=True)
-            if len(compress_stats) > 0:
-                if stats_fl is not False:
-                    compress_stats.to_csv(stats_fl)
-            else:
-                compress_stats = False
-    return compress_stats
-
-def compress_files_subdir(subdir_file_dict, starting_dir, compress_dir='compressed',
-                          processed_dir='processed', img_suffixes=['.jpg', 'jpeg', '.png'],
-                          stats_fl='compression_stats.csv', to_jpg=True, overwrite=False,
-                          subdir_progress_bar=True):
-    """
-    Compress all images in a directory and save them to a new directory.
-
-    nuances:
-    starting_dir is the directory where the files are located. The compressed_dir is used
-    to rename the file path. For example, if the file is located in 'images/2020/01/01/image.jpg'
-    and the compressed_dir is 'compressed', then the new file path will be
-    'compressed/2020/01/01/image.jpg'
-
-    same goes for the processed_dir.
-
-    warning. the rename function will rename all matching strings in the path. For example,
-    if the starting_dir is 'images' and it shows up twice in the path, then it will rename
-    both of them. for example, if the file is located in 'images/2020/01/01/images/image.jpg'
-    and the starting_dir is 'images', then the new file path will be
-    'compressed/2020/01/01/compressed/image.jpg'
-
-    Parameters
-    ----------
-    subdir_file_dict : dict
-        dictionary of subdirectories and files to compress. This is the output of
-        get_files_to_compress
-    starting_dir : str
-        directory where the files are located
-    compress_dir : str, optional
-        directory where the compressed files will be saved. The default is 'compressed'.
-    processed_dir : str, optional
-        directory where the processed files will be saved. The default is 'processed'.
-    img_suffixes : list, optional
-        list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
-        any file that doesn't match these suffixes will be ignored.
-    """
-    compress_stats_list = []
-    folders = list(subdir_file_dict.keys())
-    for fidx, folder in enumerate(tqdm(folders, desc='Total Compression')):
-        fl_compress_dict, fl_list = _get_subdir_images_to_compress(subdir_file_dict,
-                                                                    folder,
-                                                                    overwrite,
-                                                                    starting_dir,
-                                                                    compress_dir,
-                                                                    processed_dir)
-
-        compress_stats = compress_singlesubdir_images(fl_list,
-                                                      folder,
-                                                      fl_compress_dict,
-                                                      to_jpg=to_jpg,
-                                                      overwrite=overwrite,
-                                                      stats_fl=stats_fl,
-                                                      progress_bar=subdir_progress_bar)
-        compress_stats_list.append(compress_stats)
-        compress_stats = pd.concat(compress_stats_list, ignore_index=True)
-        if len(compress_stats) > 0:
-            if stats_fl is not False:
-                compress_stats.to_csv(stats_fl)
+        if progress_bar:
+            for flid, fl in enumerate(tqdm(files, desc=f'{folder_name}: ')):
+                comp_fl = comp_paths[fl.name]['comp_fl']
+                proc_fl = comp_paths[fl.name]['proc_fl']
+                stats, cstatus = self.image_compressor.compress_image(fl,
+                                                                      export_path=comp_fl)
+                compres_stats_list.append(stats)
+                self._shuffle_files(compress_status=cstatus,
+                                    img_file=fl,
+                                    proc_file=proc_fl,
+                                    compress_file=comp_fl)
         else:
-            compress_stats = False
-
-    return compress_stats
-
-
-def compress_files_subdir_notqdm(subdir_file_dict, starting_dir, compress_dir='compressed',
-                                 processed_dir='processed', img_suffixes=['.jpg', 'jpeg', '.png'],
-                                 stats_fl='compression_stats.csv', to_jpg=True, overwrite=False):
-    """
-    Compress all images in a directory and save them to a new directory.
-
-    nuances:
-    starting_dir is the directory where the files are located. The compressed_dir is used
-    to rename the file path. For example, if the file is located in 'images/2020/01/01/image.jpg'
-    and the compressed_dir is 'compressed', then the new file path will be
-    'compressed/2020/01/01/image.jpg'
-
-    same goes for the processed_dir.
-
-    warning. the rename function will rename all matching strings in the path. For example,
-    if the starting_dir is 'images' and it shows up twice in the path, then it will rename
-    both of them. for example, if the file is located in 'images/2020/01/01/images/image.jpg'
-    and the starting_dir is 'images', then the new file path will be
-    'compressed/2020/01/01/compressed/image.jpg'
-
-    Parameters
-    ----------
-    subdir_file_dict : dict
-        dictionary of subdirectories and files to compress. This is the output of
-        get_files_to_compress
-    starting_dir : str
-        directory where the files are located
-    compress_dir : str, optional
-        directory where the compressed files will be saved. The default is 'compressed'.
-    processed_dir : str, optional
-        directory where the processed files will be saved. The default is 'processed'.
-    img_suffixes : list, optional
-        list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
-        any file that doesn't match these suffixes will be ignored.
-    """
-    compress_stats_list = []
-    folders = list(subdir_file_dict.keys())
-    for fidx, folder in enumerate(folders):
-        fl_compress_dict, fl_list = _get_subdir_images_to_compress(subdir_file_dict,
-                                                                    folder,
-                                                                    overwrite,
-                                                                    starting_dir,
-                                                                    compress_dir,
-                                                                    processed_dir)
-
-        compress_stats = compress_singlesubdir_images(fl_list,
-                                                      folder,
-                                                      fl_compress_dict,
-                                                      to_jpg=to_jpg,
-                                                      overwrite=overwrite,
-                                                      stats_fl=stats_fl,
-                                                      progress_bar=False)
-
-        compress_stats_list.append(compress_stats)
-        compress_stats = pd.concat(compress_stats_list, ignore_index=True)
-        if len(compress_stats) > 0:
-            if stats_fl is not False:
-                compress_stats.to_csv(stats_fl)
+            for flid, fl in enumerate(files):
+                comp_fl = comp_paths[fl.name]['comp_fl']
+                proc_fl = comp_paths[fl.name]['proc_fl']
+                stats, cstatus = self.image_compressor.compress_img(fl,
+                                                                    export_path=comp_fl)
+                compres_stats_list.append(stats)
+                self._shuffle_files(compress_status=cstatus,
+                                    img_file=fl,
+                                    proc_file=proc_fl,
+                                    compress_file=comp_fl)
+        if len(compres_stats_list) > 0:
+            compress_stats = pd.concat(compres_stats_list, ignore_index=True)
         else:
-            compress_stats = False
+            compress_stats = []
 
-    return compress_stats
+        return compress_stats
+
+    def _shuffle_files(self, compress_status, img_file, proc_file, compress_file):
+        """shuffle around the files as needed. If image was compressed and not overwriting,
+        then move the original file to the processed directory. If image was not compressed,
+        then move the original file to the compressed directory"""
+
+        if compress_status == 'Compressed':
+            if self.overwrite is True:
+                img_file.unlink()
+                shutil.copy(compress_file, img_file)
+            else:
+                shutil.move(img_file, proc_file)
+        elif compress_status == 'NOT Compressed':
+            if self.overwrite is False:
+                shutil.move(img_file, compress_file)
+        elif compress_status == 'Failed':
+            pass
+        else:
+            self.logger.error(f"Unknown compress_status: {compress_status}")
+
+    def _compress_files_subdir(self, subdir, progress_bar=True):
+        """
+        iterate through all subdirectories and compress the images. This will recursively call
+        itself to iterate through all subdirectories
+        """
+        self.logger.info(f"Checking for files/subdirs in {subdir}")
+        files, sub_directories = get_files_to_compress_recursive(subdir)
+        compress_stats = []
+        if len(files) > 0:
+            cs = self._compress_singlesubdir_images(files, subdir, progress_bar)
+            compress_stats.append(cs)
+        if len(sub_directories) > 0:
+            for sub_dir in sub_directories:
+                cs = self._compress_files_subdir(sub_dir, progress_bar=progress_bar)
+                compress_stats.append(cs)
+        compress_stats = pd.concat(compress_stats, ignore_index=True)
+        if self.stats_fl is not False:
+            compress_stats.to_csv(self.stats_fl, index=False)
+        return compress_stats
+
+    def compress_files(self, progress_bar=True):
+        """
+        Compress all images in the starting directory.
+
+        Parameters
+        ----------
+        subdir_file_dict : dict
+            dictionary of subdirectories and files to compress. This is the output of
+            get_files_to_compress
+        starting_dir : str
+            directory where the files are located
+        compress_dir : str, optional
+            directory where the compressed files will be saved. The default is 'compressed'.
+        processed_dir : str, optional
+            directory where the processed files will be saved. The default is 'processed'.
+        img_suffixes : list, optional
+            list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
+            any file that doesn't match these suffixes will be ignored.
+        """
+        # add the log file handler
+        self._add_log_handler(log_file=self.log_file)
+        compress_stats = self._compress_files_subdir(self.starting_dir, progress_bar=progress_bar)
+        if self.stats_fl is not False:
+            compress_stats.to_csv(self.stats_fl, index=False)
+        # close the logger
+        self._remove_log_handler(log_file=self.log_file)
+        return compress_stats
+
+
+class ImageCompress():
+    def __init__(self, new_size_ratio='auto', quality='auto', to_jpg=True, n_attemps=3,
+                 log_file=False):
+        """Compression class that given an image path, it will compress the image to try to
+        save space. It will return a dataframe with the results of the compression.
+
+        Parameters
+        ----------
+        new_size_ratio : float, optional
+            ratio to resize the image. The default is 'auto'.
+        quality : int, optional
+            quality of the image. The default is 'auto'.
+        to_jpg : bool, optional
+            if True, then it will export the image as a jpg. The default is True.
+        n_attemps : int, optional
+            number of attempts to compress the image. The default is 3.
+        log_file : str, optional
+            path to the log file. The default is False.
+        """
+        self.new_size_ratio = new_size_ratio
+        self.quality = quality
+        self.to_jpg = to_jpg
+        self.n_attemps = n_attemps
+        self.log_file = log_file
+        if log_file is False or log_file is None:
+            self.logger = False
+        else:
+            self._set_logger(log_file)
+
+        # 195.31KB, i.e. don't compress if image size is less than this
+        self.min_compress_size = 200000
+
+    def _set_logger(self, log_file):
+        """Set the logger"""
+        self.logger = logging.getLogger('ImageCompress')
+        self.logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
+        fh = logging.FileHandler(log_file)
+        fh.setFormatter(formatter)
+        self.logger.addHandler(fh)
+
+    def _remove_logger(self):
+        """Remove the logger"""
+        handlers = self.logger.handlers[:]
+        for handler in handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
+    def _set_external_logger(self, logger):
+        """Set an external logger"""
+        self.logger = logger
+
+    def get_new_width_height(self, image_w, image_h, size_ratio=False):
+        """
+        Determine a new width and height based on new_size_ratio
+        if new_size_ratio is 'auto' then it will determine the new_size_ratio based on the
+        image size.
+
+        Parameters
+        ----------
+        image_w : int
+            image width
+        image_h : int
+            image height
+        """
+        if size_ratio is False:
+            size_ratio = self.new_size_ratio
+
+        if size_ratio == 'auto':
+            if image_h > 1200:
+                if image_h > 3000 or image_w > 3000:
+                    size_ratio = 0.5
+                else:
+                    size_ratio = 0.7
+            else:
+                size_ratio = 1
+
+        if size_ratio < 1.0:
+            # if resizing ratio is below 1.0, then multiply width & height with this ratio
+            # to reduce image size
+            new_w = int(image_w * size_ratio)
+            new_h = int(image_h * size_ratio)
+        else:
+            new_w = False
+            new_h = False
+        return new_w, new_h, size_ratio
+
+    def get_quality(self, image_size):
+        """
+        Determine export quality based on image filesize
+
+        Parameters
+        ----------
+        quality : int (0 to 100)
+            quality to export image
+        image_size : int
+            image filesize
+        """
+        # determine quality
+        if self.quality == 'auto':
+            if image_size > 1100000:  # 1.05MB
+                if image_size > 10000000:  # 9.54MB
+                    quality = 70
+                else:
+                    quality = 80
+            else:
+                quality = 90
+        else:
+            quality = self.quality
+        return quality
+
+    def _compress_save(self, img, width, height, quality, exp_fl):
+        """
+        Given the width, height, and quality. Re-size and export an image to the
+        exp_fl path then returns the size of the newly compressed image
+
+        Parameters
+        ----------
+        image
+            pillow loaded image object
+        width
+            new width. if False then it won't try to resize
+        height
+            new_height. if False then it won't try to resize
+        quality
+            export quality
+        exp_fl
+            export filename path
+
+        Returns
+        -------
+            new image file size
+        """
+        if self.logger is not False:
+            self.logger.info(f"{_s6}Compressing image to {exp_fl}: width={width}, height={height}, "
+                             f"quality={quality}")
+        if width is False or height is False:
+            compress_img = img
+        else:
+            try:
+                compress_img = img.resize((width, height), Image.LANCZOS)
+            except OSError:
+                self.logger.warning(f"Failed to resize image to {width}x{height}. OSError")
+                return False
+        try:
+            # save the image with the corresponding quality and optimize set to True
+            compress_img.save(exp_fl, quality=quality, optimize=True)
+        except OSError:
+            try:
+                if self.logger is not False:
+                    self.logger.warning(f"Failed to save image to {exp_fl}. OSError, Try RGB mode")
+                # convert the image to RGB mode first
+                compress_img = img.convert("RGB")
+                # save the image with the corresponding quality and optimize set to True
+                compress_img.save(exp_fl, quality=quality, optimize=True)
+            except OSError:
+                if self.logger is not False:
+                    self.logger.warning(f"Failed to save image to {exp_fl}. OSError")
+                return False
+        return exp_fl.stat().st_size
+
+    def compress_image(self, image_path, export_path=False):
+        """Compression function that given an image path, it will compress the image to try to
+        save space. It will return a dataframe with the results of the compression.
+
+        Parameters
+        ----------
+        image_path : str
+            path to the image file
+        export_path : str, optional
+            path to export the compressed image. The default is False.
+
+        Returns
+        -------
+        results : pandas dataframe
+            dataframe with the results of the compression
+        status : str
+            status of the compression. 'Compressed', 'NOT Compressed', or 'Failed'
+        """
+        if self.logger is not False:
+            self.logger.info(f"{_s2}Compressing {image_path}")
+        status = 'Not Started'
+        if self.to_jpg:
+            export_path = export_path.with_suffix('.jpg')
+        # load the image to memory
+        try:
+            with Image.open(image_path) as img:
+
+                # Get stats
+                image_size = image_path.stat().st_size
+                image_w, image_h = img.size
+
+                # Determine if you need a new size
+                new_w, new_h, size_ratio = self.get_new_width_height(image_w,
+                                                                     image_h,
+                                                                     size_ratio=False)
+                # determine quality
+                quality = self.get_quality(image_size)
+
+                compress = True
+                attempts = 0
+                if image_size < self.min_compress_size:
+                    min_size_str = get_size_format(self.min_compress_size)
+                    # Don't try to compress if it's under '195.31KB'
+                    if self.logger is not False:
+                        self.logger.info(f"{_s4}Image size is less than {min_size_str}. "
+                                         "Not compressing")
+                    status = 'NOT Compressed'
+                    compress = False
+                    new_image_size = image_size
+                    shutil.copy(image_path, export_path)
+                while compress is True and attempts < 3:
+                    attempts += 1
+                    new_image_size = self._compress_save(img,
+                                                         new_w,
+                                                         new_h,
+                                                         quality,
+                                                         export_path)
+                    status = 'Compressed'
+                    if new_image_size is False:
+                        # if the image can't be resized then don't try to compress it
+                        status = 'Failed'
+                        compress = False
+                        new_image_size = image_size
+                    elif new_image_size > 5000000:  # '4.77MB'
+                        size_ratio -= 10
+                        new_w, new_h, size_ratio = self.get_new_width_height(image_w,
+                                                                             image_h,
+                                                                             size_ratio=size_ratio)
+                        quality -= 10
+                    elif new_image_size > 2000000:  # '1.91MB'
+                        quality -= 10
+                    else:
+                        compress = False
+                # Calculate Saving Diff
+                if new_image_size == image_size:
+                    saving_diff_str = '-'
+                elif new_image_size > image_size:
+                    if self.logger is not False:
+                        self.logger.warning(f"{_s6}New image size is greater than original image "
+                                            "size. Not compressing")
+                    saving_diff_str = '-'
+                    shutil.copy(image_path, export_path)
+
+                else:
+                    saving_diff = (image_size - new_image_size)/image_size
+                    saving_diff_str = f"{saving_diff:.1%}"
+                results = pd.DataFrame({'Image': [image_path],
+                                        'Image_size': [get_size_format(image_size)],
+                                        'Status': [status],
+                                        'New_size': [get_size_format(new_image_size)],
+                                        'Compress %': [saving_diff_str],
+                                        'Attempts': [attempts],
+                                        })
+        except UnidentifiedImageError:
+            if self.logger is not False:
+                self.logger.error(f"{_s6}Failed to compress due to UnidentifiedImageError")
+            results = pd.DataFrame({'Image': [image_path],
+                                    'Image_size': ['-'],
+                                    'Status': ['Failed'],
+                                    'New_size': ['-'],
+                                    'Compress %': ['-'],
+                                    'Attempts': [0],
+                                    })
+        return results, status
