@@ -2,7 +2,7 @@ import ffmpeg
 from .file_utils import get_size_format, rename_dir, delete_empty_dir
 
 
-_video_suffixes = ['.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.mkv', '.mov', '.wmv', '.mts','.ts']
+_video_suffixes = ['.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.mkv', '.mov', '.wmv', '.mts', '.ts']
 
 
 def _get_video_codec(fl):
