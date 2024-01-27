@@ -1,35 +1,63 @@
 from .utils.video_utils import _get_video_codec
 from .utils.utils import get_date_12hr_min
-from .utils.file_utils import get_size_format
+from .utils.file_utils import get_size_format, rename_dir
+from tqdm.notebook import tqdm
 import ffmpeg
 from pathlib import Path
 from warnings import warn
 import logging
 import shutil
+import pandas as pd
 
+_video_suffixes = ['.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.mkv', '.mov', '.wmv', '.mts', '.ts']
 
 _s = ' '
 _2s = 2*_s
 _4s = 4*_s
 
 
+def _get_files_to_compress_recursive(main_dir, fl_suffixes='default'):
+    """
+    get list of files to compress from a directory, also get all subdirectories
+    that can then be used to iterate through all subdirectories
+
+    Parameters
+    ----------
+    main_dir : str
+        directory to search for files
+    fl_suffixes : list, optional
+        list of suffixes to search for. The default is ['.mp4', '.m4v', '.mpg'].
+
+    Returns
+    -------
+    files: list
+        list of files
+    sub_directories: list
+        list of subdirectories
+    """
+    if fl_suffixes == 'default':
+        fl_suffixes = _video_suffixes
+    sub_directories = [folder for folder in Path(main_dir).glob('*') if folder.is_dir()]
+    files = []
+    files = [fl for fl in main_dir.glob('*') if fl.is_file()]
+    files = [fl for fl in files if fl.suffix.lower() in fl_suffixes]
+
+    return files, sub_directories
+
+
 class MultiVideoCompress:
-    def __init__(self, stats_fl='compression_stats.csv', overwrite=False, log_file='log.txt'):
+    def __init__(self, stats_fl='compression_stats.csv', log_file='log.txt'):
         """Compress all videos in a directory and save them to a new directory
 
         Parameters
         ----------
         stats_fl : str, optional
             path to csv file to save compression stats, by default 'compression_stats.csv'
-        overwrite : bool, optional
-            overwrite any output files, by default False
         log_file : str, optional
             path to log file, by default 'log.txt'
         """
 
         self.stats_fl = stats_fl
-        self.overwrite = overwrite
-
 
         if log_file is False or log_file is None:
             self.logger = False
@@ -43,6 +71,224 @@ class MultiVideoCompress:
             self.logger.setLevel(logging.INFO)
         self._set_stats_df()
 
+    def _add_log_handler(self, log_file):
+        """Add the log file handler to the logger"""
+        # setup a file logger format so that it formats the messages to include log level,
+        # class name, function name, and function arguments
+        self.logger.info(f"Adding log handler for {log_file}")
+        formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
+
+        self._remove_log_handler(log_file)
+        fh = logging.FileHandler(log_file, encoding='utf-8')
+        fh.setFormatter(formatter)
+        self.logger.addHandler(fh)
+
+    def _remove_log_handler(self, log_file):
+        """Remove the log file handler from the logger"""
+        self.logger.info(f"Removing log handler for {log_file}")
+        handlers = self.logger.handlers[:]
+        for handler in handlers:
+            if log_file in handler.baseFilename:
+                handler.close()
+                self.logger.removeHandler(handler)
+
+    def close_logger(self):
+        """Close all handlers in the logger"""
+        self.logger.info("Closing logger")
+        handlers = self.logger.handlers[:]
+        for handler in handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
+    def _get_compress_paths(self, files):
+        """
+        get list of image files to compress from a directory. This will iterate through all
+        subdirectories
+
+        Parameters
+        ----------
+        files : list
+            list of files to compress
+
+        """
+        self.logger.info(f"Getting compress paths for {len(files)} files")
+        fl_compress_dict = {}
+        for fl in files:
+            comp_fl = rename_dir(fl,
+                                 self.starting_dir,
+                                 self.compress_dir)
+            proc_fl = rename_dir(fl,
+                                 self.starting_dir,
+                                 self.processed_dir)
+            proc_dir = proc_fl.parent
+            if comp_fl.parent.is_dir() is False:
+                comp_fl.parent.mkdir(parents=True)
+            if proc_fl.parent.is_dir() is False:
+                proc_fl.parent.mkdir(parents=True)
+
+            fl_compress_dict[fl.name] = {'fl': fl,
+                                         'comp_fl': comp_fl,
+                                         'proc_fl': proc_fl,
+                                         'proc_dir': proc_dir}
+        return fl_compress_dict
+
+    def _get_stats(self, vc):
+        """Get the stats from the VideoCompress object
+
+        Parameters
+        ----------
+        vc : VideoCompress
+            VideoCompress object
+
+        Returns
+        -------
+        stats : dict
+            dictionary of stats
+        """
+        stats = {'video_in': vc.video_in.name,
+                 'video_out': vc.video_out.name,
+                 'video_height': vc.video_height,
+                 'video_out_height': vc.out_video_height,
+                 'in_file_size': get_size_format(vc.meta['file_size']),
+                 'converted_fl_size': vc.conv_fl_size,
+                 'compression_ratio': vc.compression_ratio}
+        stats = pd.DataFrame(stats, index=[0])
+        return stats
+
+    def _compress_singlesubdir(self, files, folder_name, progress_bar=True):
+        """
+        compress the files in a subdirectory
+
+        Parameters
+        ----------
+        files : list
+            list of files to compress
+        folder_name : str
+            name of the subdirectory which is used in the progress bar if progress_bar is True
+        progress_bar : bool, optional
+            if True, then it will show a progress bar. The default is True.
+        """
+        self.logger.info((f"Compressing {len(files)} files in {folder_name}. "
+                          f"progress_bar={progress_bar}"))
+        compres_stats_list = []
+        comp_paths = self._get_compress_paths(files)
+
+        if progress_bar:
+            for flid, fl in enumerate(tqdm(files, desc=f'{folder_name}: ')):
+                vc = self.video_compressor(video_in=comp_paths[fl.name]['fl'],
+                                           video_out=comp_paths[fl.name]['comp_fl'],
+                                           proc_dir=comp_paths[fl.name]['proc_dir'])
+                stats = self._get_stats(vc)
+                compres_stats_list.append(stats)
+
+        else:
+            for flid, fl in enumerate(files):
+                vc = self.video_compressor(video_in=comp_paths[fl.name]['fl'],
+                                           video_out=comp_paths[fl.name]['comp_fl'],
+                                           proc_dir=comp_paths[fl.name]['proc_dir'])
+                stats = self._get_stats(vc)
+                compres_stats_list.append(stats)
+        if len(compres_stats_list) > 0:
+            compress_stats = pd.concat(compres_stats_list, ignore_index=True)
+        else:
+            compress_stats = []
+
+        return compress_stats
+
+    def _compress_files_subdir(self, subdir, progress_bar=True):
+        """
+        iterate through all subdirectories and compress the files. This will recursively call
+        itself to iterate through all subdirectories
+        """
+        self.logger.info(f"Checking for files/subdirs in {subdir}")
+        files, sub_directories = _get_files_to_compress_recursive(subdir)
+        compress_stats = []
+        if len(files) > 0:
+            cs = self._compress_singlesubdir(files, subdir, progress_bar)
+            compress_stats.append(cs)
+        if len(sub_directories) > 0:
+            for sub_dir in sub_directories:
+                cs = self._compress_files_subdir(sub_dir, progress_bar=progress_bar)
+                compress_stats.append(cs)
+        if len(compress_stats) > 0:
+            compress_stats = pd.concat(compress_stats, ignore_index=True)
+            if self.stats_fl is not False:
+                compress_stats.to_csv(self.stats_fl, index=False)
+        else:
+            compress_stats = pd.DataFrame()
+        return compress_stats
+
+    def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed'):
+        """
+        Set the directories for the compression
+
+        nuances:
+        starting_dir is the directory where the files are located. The compressed_dir is used
+        to rename the file path. For example, if the file is located in
+        'images/2020/01/01/image.jpg' and the compressed_dir is 'compressed', then the new file
+        path will be 'compressed/2020/01/01/image.jpg'
+
+        same goes for the processed_dir.
+
+        warning. the rename function will rename all matching strings in the path. For example,
+        if the starting_dir is 'images' and it shows up twice in the path, then it will rename
+        both of them. for example, if the file is located in 'images/2020/01/01/images/image.jpg'
+        and the starting_dir is 'images', then the new file path will be
+        'compressed/2020/01/01/compressed/image.jpg'
+
+        Parameters
+        ----------
+        starting_dir : str
+            directory where the files are located
+        compress_dir : str, optional
+            directory where the compressed files will be saved. The default is 'compressed'.
+        processed_dir : str, optional
+            directory where the processed files will be saved. The default is 'processed'.
+        """
+        self.starting_dir = Path(starting_dir)
+        self.compress_dir = Path(compress_dir)
+        self.processed_dir = Path(processed_dir)
+        self.logger.info(f"starting_dir: {self.starting_dir}")
+        self.logger.info(f"compress_dir: {self.compress_dir}")
+        self.logger.info(f"processed_dir: {self.processed_dir}")
+
+    def video_convert(self, video_in, video_out, proc_dir, scale='auto'):
+        """Convert a video using the VideoCompress class
+
+        Parameters
+        ----------
+        video_in : Path
+            path to video file
+        video_out : Path
+            path to output video file
+        scale : dict, optional
+            dictionary of scale settings, by default 'auto'
+        """
+
+        vc = VideoCompress(video_in, video_out, scale=scale, external_logger=self.log_file)
+
+        vc.update_logic(keep_larger_video=False, delete_original=False,
+                        copy_original_if_not_converted=True, proccessed_folder=proc_dir)
+        vc.convert_video()
+        return vc
+
+    def compress_files(self, progress_bar=True):
+        """
+        Compress all videos in the starting directory.
+
+        Parameters
+        ----------
+        progress_bar : bool, optional
+            if True, then it will show a progress bar for each subdirectory. The default is True.
+        """
+        # add the log file handler
+        self._add_log_handler(log_file=self.log_file)
+        compress_stats = self._compress_files_subdir(self.starting_dir, progress_bar=progress_bar)
+        if self.stats_fl is not False:
+            compress_stats.to_csv(self.stats_fl, index=False)
+        # close the logger
+        self._remove_log_handler(log_file=self.log_file)
+        return compress_stats
 
 
 # VideoCompress class that will compress a video using ffmpeg
@@ -60,7 +306,8 @@ class VideoCompress:
     settings : dict, optional
         dictionary of output settings, by default None
     """
-    def __init__(self, video_in, video_out, scale='auto', log_file=False, warn_msg=True):
+    def __init__(self, video_in, video_out, scale='auto', log_file=False,
+                 external_logger=False, warn_msg=True):
         self.video_in = Path(video_in)
         self.video_out = Path(video_out)
         self.warn_msg = warn_msg
@@ -70,10 +317,15 @@ class VideoCompress:
         else:
             self._set_logger(log_file)
 
+        if external_logger is not False:
+            self._set_external_logger(external_logger)
+
         if self.video_out.suffix != '.mp4':
             if warn_msg:
                 warn("VideoCompress only supports .mp4 output files."
                      " Changing output file suffix to .mp4")
+            if self.logger is not False:
+                self.logger.warning("{_s2}Changing output file suffix to .mp4")
             self.video_out = self.video_out.with_suffix('.mp4')
 
         self.scale = scale

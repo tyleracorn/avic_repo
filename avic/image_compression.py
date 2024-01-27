@@ -159,7 +159,7 @@ class MultiImageCompression():
         formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
 
         self._remove_log_handler(log_file)
-        fh = logging.FileHandler(log_file)
+        fh = logging.FileHandler(log_file, encoding='utf-8')
         fh.setFormatter(formatter)
         self.logger.addHandler(fh)
 
@@ -328,9 +328,12 @@ class MultiImageCompression():
             for sub_dir in sub_directories:
                 cs = self._compress_files_subdir(sub_dir, progress_bar=progress_bar)
                 compress_stats.append(cs)
-        compress_stats = pd.concat(compress_stats, ignore_index=True)
-        if self.stats_fl is not False:
-            compress_stats.to_csv(self.stats_fl, index=False)
+        if len(compress_stats) > 0:
+            compress_stats = pd.concat(compress_stats, ignore_index=True)
+            if self.stats_fl is not False:
+                compress_stats.to_csv(self.stats_fl, index=False)
+        else:
+            compress_stats = pd.DataFrame()
         return compress_stats
 
     def compress_files(self, progress_bar=True):
