@@ -12,8 +12,8 @@ import pandas as pd
 _video_suffixes = ['.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.mkv', '.mov', '.wmv', '.mts', '.ts']
 
 _s = ' '
-_2s = 2*_s
-_4s = 4*_s
+_s2 = 2*_s
+_s4 = 4*_s
 
 
 def _get_files_to_compress_recursive(main_dir, fl_suffixes='default'):
@@ -66,10 +66,9 @@ class MultiVideoCompress:
             self.log_file = Path(log_file)
             if self.log_file.is_file():
                 self.log_file.unlink()
-            self._set_logger()
+
             self.logger = logging.getLogger('MultiVideoCompress')
             self.logger.setLevel(logging.INFO)
-        self._set_stats_df()
 
     def _add_log_handler(self, log_file):
         """Add the log file handler to the logger"""
@@ -111,7 +110,8 @@ class MultiVideoCompress:
             list of files to compress
 
         """
-        self.logger.info(f"Getting compress paths for {len(files)} files")
+        if self.logger is not False:
+            self.logger.info(f"Getting compress paths for {len(files)} files")
         fl_compress_dict = {}
         for fl in files:
             comp_fl = rename_dir(fl,
@@ -145,6 +145,8 @@ class MultiVideoCompress:
         stats : dict
             dictionary of stats
         """
+        if self.logger is not False:
+            self.logger.info(f"Getting Stats for {vc.video_in.name}")
         stats = {'video_in': vc.video_in.name,
                  'video_out': vc.video_out.name,
                  'video_height': vc.video_height,
@@ -168,24 +170,25 @@ class MultiVideoCompress:
         progress_bar : bool, optional
             if True, then it will show a progress bar. The default is True.
         """
-        self.logger.info((f"Compressing {len(files)} files in {folder_name}. "
-                          f"progress_bar={progress_bar}"))
+        if self.logger is not False:
+            self.logger.info((f"Compressing {len(files)} files in {folder_name}. "
+                              f"progress_bar={progress_bar}"))
         compres_stats_list = []
         comp_paths = self._get_compress_paths(files)
 
         if progress_bar:
             for flid, fl in enumerate(tqdm(files, desc=f'{folder_name}: ')):
-                vc = self.video_compressor(video_in=comp_paths[fl.name]['fl'],
-                                           video_out=comp_paths[fl.name]['comp_fl'],
-                                           proc_dir=comp_paths[fl.name]['proc_dir'])
+                vc = self.video_convert(video_in=comp_paths[fl.name]['fl'],
+                                        video_out=comp_paths[fl.name]['comp_fl'],
+                                        proc_dir=comp_paths[fl.name]['proc_dir'])
                 stats = self._get_stats(vc)
                 compres_stats_list.append(stats)
 
         else:
             for flid, fl in enumerate(files):
-                vc = self.video_compressor(video_in=comp_paths[fl.name]['fl'],
-                                           video_out=comp_paths[fl.name]['comp_fl'],
-                                           proc_dir=comp_paths[fl.name]['proc_dir'])
+                vc = self.video_convert(video_in=comp_paths[fl.name]['fl'],
+                                        video_out=comp_paths[fl.name]['comp_fl'],
+                                        proc_dir=comp_paths[fl.name]['proc_dir'])
                 stats = self._get_stats(vc)
                 compres_stats_list.append(stats)
         if len(compres_stats_list) > 0:
@@ -200,22 +203,35 @@ class MultiVideoCompress:
         iterate through all subdirectories and compress the files. This will recursively call
         itself to iterate through all subdirectories
         """
-        self.logger.info(f"Checking for files/subdirs in {subdir}")
+        if self.logger is not False:
+            self.logger.info(f"Checking for files/subdirs in {subdir}")
+
         files, sub_directories = _get_files_to_compress_recursive(subdir)
+
         compress_stats = []
+
         if len(files) > 0:
-            cs = self._compress_singlesubdir(files, subdir, progress_bar)
+            cs = self._compress_singlesubdir(files,
+                                             subdir,
+                                             progress_bar)
             compress_stats.append(cs)
+
         if len(sub_directories) > 0:
             for sub_dir in sub_directories:
-                cs = self._compress_files_subdir(sub_dir, progress_bar=progress_bar)
+                cs = self._compress_files_subdir(sub_dir,
+                                                 progress_bar=progress_bar)
                 compress_stats.append(cs)
+
         if len(compress_stats) > 0:
-            compress_stats = pd.concat(compress_stats, ignore_index=True)
+            compress_stats = pd.concat(compress_stats,
+                                       ignore_index=True)
             if self.stats_fl is not False:
-                compress_stats.to_csv(self.stats_fl, index=False)
+                compress_stats.to_csv(self.stats_fl,
+                                      index=False)
+
         else:
             compress_stats = pd.DataFrame()
+
         return compress_stats
 
     def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed'):
@@ -248,9 +264,10 @@ class MultiVideoCompress:
         self.starting_dir = Path(starting_dir)
         self.compress_dir = Path(compress_dir)
         self.processed_dir = Path(processed_dir)
-        self.logger.info(f"starting_dir: {self.starting_dir}")
-        self.logger.info(f"compress_dir: {self.compress_dir}")
-        self.logger.info(f"processed_dir: {self.processed_dir}")
+        if self.logger is not False:
+            self.logger.info(f"starting_dir: {self.starting_dir}")
+            self.logger.info(f"compress_dir: {self.compress_dir}")
+            self.logger.info(f"processed_dir: {self.processed_dir}")
 
     def video_convert(self, video_in, video_out, proc_dir, scale='auto'):
         """Convert a video using the VideoCompress class
@@ -264,11 +281,18 @@ class MultiVideoCompress:
         scale : dict, optional
             dictionary of scale settings, by default 'auto'
         """
+        if self.logger is not False:
+            self.logger.info(f"Compressing {video_in.name} to {video_out.name}")
+        vc = VideoCompress(video_in,
+                           video_out,
+                           scale=scale,
+                           external_logger=self.logger,
+                           warn_msg=False)
 
-        vc = VideoCompress(video_in, video_out, scale=scale, external_logger=self.log_file)
-
-        vc.update_logic(keep_larger_video=False, delete_original=False,
-                        copy_original_if_not_converted=True, proccessed_folder=proc_dir)
+        vc.update_logic(keep_larger_video=False,
+                        delete_original=False,
+                        copy_original_if_not_converted=True,
+                        proccessed_folder=proc_dir)
         vc.convert_video()
         return vc
 
@@ -282,12 +306,16 @@ class MultiVideoCompress:
             if True, then it will show a progress bar for each subdirectory. The default is True.
         """
         # add the log file handler
-        self._add_log_handler(log_file=self.log_file)
-        compress_stats = self._compress_files_subdir(self.starting_dir, progress_bar=progress_bar)
+        if self.logger is not False:
+            self._add_log_handler(log_file=self.log_file)
+        compress_stats = self._compress_files_subdir(self.starting_dir,
+                                                     progress_bar=progress_bar)
         if self.stats_fl is not False:
-            compress_stats.to_csv(self.stats_fl, index=False)
+            compress_stats.to_csv(self.stats_fl,
+                                  index=False)
         # close the logger
-        self._remove_log_handler(log_file=self.log_file)
+        if self.logger is not False:
+            self._remove_log_handler(log_file=self.log_file)
         return compress_stats
 
 
@@ -346,14 +374,18 @@ class VideoCompress:
         """Set the logger"""
         self.logger = logging.getLogger('ImageCompress')
         self.logger.setLevel(logging.INFO)
+
         formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
+
         fh = logging.FileHandler(log_file)
         fh.setFormatter(formatter)
+
         self.logger.addHandler(fh)
 
     def _remove_logger(self):
         """Remove the logger"""
         handlers = self.logger.handlers[:]
+
         for handler in handlers:
             handler.close()
             self.logger.removeHandler(handler)
@@ -385,8 +417,10 @@ class VideoCompress:
         -------
         meta : dict
             dictionary of video metadata"""
+
         info = ffmpeg.probe(self.video_in)
         streams = info['streams']
+
         meta = {}
         for strm in streams:
             if strm['codec_type'] == "video":
@@ -394,6 +428,7 @@ class VideoCompress:
             elif strm['codec_type'] == "audio":
                 meta['audio'] = strm
         meta['file_size'] = self.video_in.stat().st_size
+
         self.meta = meta
 
     def _set_output_settings(self):
@@ -423,6 +458,8 @@ class VideoCompress:
             self.scale = {'width': -2,
                           'height': convert_to}
         self.out_video_height = convert_to
+        if self.logger is not False:
+            self.logger.info(f"Output Height: {self.out_video_height}")
 
     def _output_with_scale(self, video_stream, audio_stream):
         """
@@ -435,9 +472,12 @@ class VideoCompress:
         audio_stream : ffmpeg stream
             audio stream
         """
+        if self.logger is not False:
+            self.logger.info(f"Outputting {self.video_out.name} with scaling")
 
         try:
-            output_video_stream = video_stream.filter('scale',  **self.scale)
+            output_video_stream = video_stream.filter('scale',
+                                                      **self.scale)
             video_audio_stream = ffmpeg.output(output_video_stream,
                                                audio_stream,
                                                str(self.video_out),
@@ -445,7 +485,8 @@ class VideoCompress:
             video_audio_stream.overwrite_output().run()
             return True
         except:
-            logging.exception("output_with_scale failed")
+            if self.logger is not False:
+                self.logger.exception("output_with_scale failed")
             return False
 
     def _output_no_scale(self, video_stream, audio_stream):
@@ -459,7 +500,8 @@ class VideoCompress:
         audio_stream : ffmpeg stream
             audio stream
         """
-
+        if self.logger is not False:
+            self.logger.info(f"Outputting {self.video_out.name} without scaling")
         try:
             output_video_stream = video_stream
             video_audio_stream = ffmpeg.output(output_video_stream,
@@ -469,7 +511,8 @@ class VideoCompress:
             video_audio_stream.overwrite_output().run()
             return True
         except:
-            logging.exception("output_no_scale failed")
+            if self.logger is not False:
+                self.logger.exception("output_no_scale failed")
             return False
 
     def update_logic(self, keep_larger_video=None, delete_original=None,
@@ -504,6 +547,8 @@ class VideoCompress:
 
     def _check_logic(self):
         """ Deal with the video files after compression based on class logic"""
+        if self.logger is not False:
+            self.logger.info(f"Checking logic for {self.video_out.name}")
 
         if self.keep_larger_video is False:
             if self.video_out.stat().st_size > self.meta['file_size']:
@@ -519,11 +564,13 @@ class VideoCompress:
                         shutil.copy2(self.video_in, self.video_out)
                     else:
                         self.video_in.rename(self.video_out)
+
         if self.move_original:
             if self.delete_original:
                 self.video_in.rename(self.proccessed_folder.joinpath(self.video_in.name))
             else:
                 shutil.copy2(self.video_in, self.proccessed_folder.joinpath(self.video_in.name))
+
         if self.delete_original:
             if self.video_in.is_file():
                 self.video_in.unlink()
@@ -535,7 +582,7 @@ class VideoCompress:
         """
         date_time = get_date_12hr_min()
         if self.logger is not False:
-            logging.info(f'Started Conversion: {date_time} \n')
+            self.logger.info(f'Started Conversion: {date_time}')
 
         converted = False
 
@@ -555,7 +602,7 @@ class VideoCompress:
             conv_dif = conv_fl_size/self.meta['file_size']
 
             if self.logger is not False:
-                logging.info(f"Conversion Completed at {conv_dif:0.1%}: {self.video_out.name} \n")
+                self.logger.info(f"Conversion Completed at {conv_dif:0.1%}: {self.video_out.name}")
             self.conv_fl_size = get_size_format(conv_fl_size)
             self.compression_ratio = f"{conv_dif:0.1%}"
 
@@ -563,4 +610,4 @@ class VideoCompress:
             self.conv_fl_size = "Not Converted"
             self.compression_ratio = "NA"
             if self.logger is not False:
-                logging.info(f"Conversion Failed: {self.video_out.name} \n")
+                self.logger.info(f"Conversion Failed: {self.video_out.name}")
