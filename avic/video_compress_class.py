@@ -301,15 +301,13 @@ class MultiVideoCompress:
         # add the log file handler
         if self.logger is not False:
             self._add_log_handler(log_file=self.log_file)
-        compress_stats = self._compress_files_subdir(self.starting_dir,
-                                                     progress_bar=progress_bar)
-        if self.stats_fl is not False:
-            compress_stats.to_csv(self.stats_fl,
-                                  index=False)
+        self._compress_files_subdir(self.starting_dir,
+                                    progress_bar=progress_bar)
+
         # close the logger
         if self.logger is not False:
             self._remove_log_handler(log_file=self.log_file)
-        return compress_stats
+        return True
 
 
 # VideoCompress class that will compress a video using ffmpeg
