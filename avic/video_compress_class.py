@@ -72,6 +72,9 @@ class MultiVideoCompress:
 
         self._compress_stats_list = []
         self.compress_stats = None
+        self.total_files = 0
+        self.total_file_size_bytes = 0
+        self.total_conv_fl_size_bytes = 0
 
     def _add_log_handler(self, log_file):
         """Add the log file handler to the logger"""
@@ -90,7 +93,7 @@ class MultiVideoCompress:
         self.logger.info(f"Removing log handler for {log_file}")
         handlers = self.logger.handlers[:]
         for handler in handlers:
-            if log_file in handler.baseFilename:
+            if str(log_file) in handler.baseFilename:
                 handler.close()
                 self.logger.removeHandler(handler)
 
@@ -159,13 +162,18 @@ class MultiVideoCompress:
         stats = {'folder': folder,
                  'video_in': self.video_compress.video_in.name,
                  'video_out': self.video_compress.video_out.name,
-                 'video_height': self.video_compress.video_height,
-                 'video_out_height': self.video_compress.out_video_height,
+                 'video_height': self.video_compress.video_height_in,
+                 'video_out_height': self.video_compress.video_height_out,
                  'in_file_size': get_size_format(self.video_compress.meta['file_size']),
                  'converted_fl_size': self.video_compress.conv_fl_size,
                  'compression_ratio': self.video_compress.compression_ratio}
 
         stats = pd.DataFrame(stats, index=[0])
+
+        if self.video_compress.converted is True:
+            self.total_files += 1
+            self.total_file_size_bytes += self.video_compress.fl_size_bytes
+            self.total_conv_fl_size_bytes += self.video_compress.conv_fl_size_bytes
         return stats
 
     def _compress_singlesubdir(self, files, folder_name, progress_bar=True):
@@ -304,6 +312,20 @@ class MultiVideoCompress:
         self._compress_files_subdir(self.starting_dir,
                                     progress_bar=progress_bar)
 
+        if self.logger is not False:
+            self.logger.info(f"Total Files: {self.total_files}")
+            total_file_size = get_size_format(self.total_file_size_bytes)
+            self.logger.info(f"Total File Size: {total_file_size}")
+            total_conv_fl_size = get_size_format(self.total_conv_fl_size_bytes)
+            self.logger.info(f"Total Converted File Size: {total_conv_fl_size}")
+            conversion_ratio = self.total_conv_fl_size_bytes/self.total_file_size_bytes
+            self.logger.info(f"Total Conversion Ratio: {conversion_ratio:0.1%}")
+
+            print(f"Total Files: {self.total_files}")
+            print(f"Total File Size: {total_file_size}")
+            print(f"Total Converted File Size: {total_conv_fl_size}")
+            print(f"Total Conversion Ratio: {conversion_ratio:0.1%}")
+
         # close the logger
         if self.logger is not False:
             self._remove_log_handler(log_file=self.log_file)
@@ -355,11 +377,17 @@ class VideoCompress:
         self._set_output_settings()
         self._make_output_dirs()
 
+        self.fl_size_bytes = 0
+        self.conv_fl_size_bytes = 0
+        self.conv_fl_size = "Not Converted"
+
         # Logic
         self.keep_larger_video = False
         self.delete_original = False
         self.move_original = False
         self.copy_original_if_not_converted = False
+
+        self.converted = False
 
     def _set_logger(self):
         """Set the logger"""
@@ -436,7 +464,9 @@ class VideoCompress:
             elif strm['codec_type'] == "audio":
                 meta['audio'] = strm
                 meta['audio_codec_name'] = strm['codec_name']
-        meta['file_size'] = self.video_in.stat().st_size
+        self.fl_size_bytes = self.video_in.stat().st_size
+        meta['file_size'] = self.fl_size_bytes
+
 
         self.meta = meta
 
@@ -460,6 +490,7 @@ class VideoCompress:
             self.out_settings['b:a'] = '128K'
 
         video_height = self.meta['video']['height']
+        self.video_height_in = video_height
         if video_height >= 1080:
             convert_to = 720
             self.out_settings['b:v'] = '1M'
@@ -471,9 +502,9 @@ class VideoCompress:
         if self.scale == 'auto':
             self.scale = {'width': -2,
                           'height': convert_to}
-        self.out_video_height = convert_to
+        self.video_height_out = convert_to
         if self.logger is not False:
-            self.logger.info(f"Output Height: {self.out_video_height}")
+            self.logger.info(f"Output Height: {self.video_height_out}")
 
     def _output_with_scale(self, video_stream, audio_stream):
         """
@@ -604,21 +635,21 @@ class VideoCompress:
         if self.logger is not False:
             self.logger.info(f'Started Conversion: {date_time}')
 
-        converted = False
+        self.converted = False
 
         video_stream = ffmpeg.input(str(self.video_in)).video
         audio_stream = ffmpeg.input(str(self.video_in)).audio
 
-        if self.out_video_height == 480:
-            converted = self._output_no_scale(video_stream,
-                                              audio_stream)
-        if not converted:
-            converted = self._output_with_scale(video_stream,
-                                                audio_stream)
-        if converted:
+        if self.video_height_out == 480:
+            self.converted = self._output_no_scale(video_stream,
+                                                   audio_stream)
+        if not self.converted:
+            self.converted = self._output_with_scale(video_stream,
+                                                     audio_stream)
+        if self.converted:
             self._check_logic()
             conv_fl_size = self.video_out.stat().st_size
-            self.conv_fl_size = conv_fl_size
+            self.conv_fl_size_bytes = conv_fl_size
             conv_dif = conv_fl_size/self.meta['file_size']
 
             if self.logger is not False:

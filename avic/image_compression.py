@@ -5,9 +5,11 @@ from .utils.file_utils import get_size_format, rename_dir
 from tqdm.notebook import tqdm
 import shutil
 from PIL import UnidentifiedImageError
-import logging
+from .utils.logger import ClassWithLogger
 
-
+_failed = 'Failed'
+_compressed = 'Compressed'
+_not_compressed = 'NOT Compressed'
 _s = ' '
 _s2 = _s*2
 _s4 = _s*4
@@ -83,10 +85,10 @@ def _get_subdir_images_to_compress(subdir_file_dict, subdir, overwrite, starting
     return fl_compress_dict, files
 
 
-class MultiImageCompression():
+class MultiImageCompression(ClassWithLogger):
     def __init__(self,
                  img_suffixes=['.jpg', 'jpeg', '.png'], stats_fl='compression_stats.csv',
-                 to_jpg=True, overwrite=False, log_file='log.txt'):
+                 to_jpg=True, overwrite=False, log_file='log.txt', external_logger=False):
         """
         Compress all images in a directory and save them to a new directory.
 
@@ -131,6 +133,7 @@ class MultiImageCompression():
             2f. if new image size is greater than old image size, then try to compress again
         3. save compression stats
         """
+        super().__init__(name='MultiImageCompression', log_file=log_file, logger=external_logger)
         self.starting_dir = False
         self.compress_dir = False
         self.processed_dir = False
@@ -138,47 +141,13 @@ class MultiImageCompression():
         self.stats_fl = stats_fl
         self.to_jpg = to_jpg
         self.overwrite = overwrite
-        self.log_file = log_file
 
-        self.image_compressor = ImageCompress(new_size_ratio='auto', quality='auto',
-                                              to_jpg=self.to_jpg, n_attemps=3,
-                                              log_file=False)
-
-        # Setup the logger for the class
-        if Path(log_file).is_file() is True:
-            Path(log_file).unlink()
-        self.logger = logging.getLogger('MultiImageCompression')
-        self.logger.setLevel(logging.INFO)
-        self.image_compressor._set_external_logger(self.logger)
-
-    def _add_log_handler(self, log_file):
-        """Add the log file handler to the logger"""
-        # setup a file logger format so that it formats the messages to include log level,
-        # class name, function name, and function arguments
-        self.logger.info(f"Adding log handler for {log_file}")
-        formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
-
-        self._remove_log_handler(log_file)
-        fh = logging.FileHandler(log_file, encoding='utf-8')
-        fh.setFormatter(formatter)
-        self.logger.addHandler(fh)
-
-    def _remove_log_handler(self, log_file):
-        """Remove the log file handler from the logger"""
-        self.logger.info(f"Removing log handler for {log_file}")
-        handlers = self.logger.handlers[:]
-        for handler in handlers:
-            if log_file in handler.baseFilename:
-                handler.close()
-                self.logger.removeHandler(handler)
-
-    def close_logger(self):
-        """Close all handlers in the logger"""
-        self.logger.info("Closing logger")
-        handlers = self.logger.handlers[:]
-        for handler in handlers:
-            handler.close()
-            self.logger.removeHandler(handler)
+        self.image_compressor = ImageCompress(new_size_ratio='auto',
+                                              quality='auto',
+                                              to_jpg=self.to_jpg,
+                                              n_attemps=3,
+                                              log_file=False,
+                                              external_logger=self.logger)
 
     def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed'):
         """
@@ -210,9 +179,10 @@ class MultiImageCompression():
         self.starting_dir = Path(starting_dir)
         self.compress_dir = Path(compress_dir)
         self.processed_dir = Path(processed_dir)
-        self.logger.info(f"starting_dir: {self.starting_dir}")
-        self.logger.info(f"compress_dir: {self.compress_dir}")
-        self.logger.info(f"processed_dir: {self.processed_dir}")
+        if self.logger is not False:
+            self.logger.info(f"starting_dir: {self.starting_dir}")
+            self.logger.info(f"compress_dir: {self.compress_dir}")
+            self.logger.info(f"processed_dir: {self.processed_dir}")
 
     def _get_compress_paths(self, files):
         """
@@ -280,8 +250,8 @@ class MultiImageCompression():
             for flid, fl in enumerate(files):
                 comp_fl = comp_paths[fl.name]['comp_fl']
                 proc_fl = comp_paths[fl.name]['proc_fl']
-                stats, cstatus = self.image_compressor.compress_img(fl,
-                                                                    export_path=comp_fl)
+                stats, cstatus = self.image_compressor.compress_image(fl,
+                                                                      export_path=comp_fl)
                 compres_stats_list.append(stats)
                 self._shuffle_files(compress_status=cstatus,
                                     img_file=fl,
@@ -299,16 +269,16 @@ class MultiImageCompression():
         then move the original file to the processed directory. If image was not compressed,
         then move the original file to the compressed directory"""
 
-        if compress_status == 'Compressed':
+        if compress_status == _compressed:
             if self.overwrite is True:
                 img_file.unlink()
                 shutil.copy(compress_file, img_file)
             else:
                 shutil.move(img_file, proc_file)
-        elif compress_status == 'NOT Compressed':
+        elif compress_status == _not_compressed:
             if self.overwrite is False:
                 shutil.move(img_file, compress_file)
-        elif compress_status == 'Failed':
+        elif compress_status == _failed:
             pass
         else:
             self.logger.error(f"Unknown compress_status: {compress_status}")
@@ -355,19 +325,17 @@ class MultiImageCompression():
             list of image suffixes to search for. The default is ['.jpg', 'jpeg', '.png'].
             any file that doesn't match these suffixes will be ignored.
         """
-        # add the log file handler
-        self._add_log_handler(log_file=self.log_file)
+
         compress_stats = self._compress_files_subdir(self.starting_dir, progress_bar=progress_bar)
         if self.stats_fl is not False:
             compress_stats.to_csv(self.stats_fl, index=False)
-        # close the logger
-        self._remove_log_handler(log_file=self.log_file)
+
         return compress_stats
 
 
-class ImageCompress():
+class ImageCompress(ClassWithLogger):
     def __init__(self, new_size_ratio='auto', quality='auto', to_jpg=True, n_attemps=3,
-                 log_file=False):
+                 log_file=False, external_logger=False):
         """Compression class that given an image path, it will compress the image to try to
         save space. It will return a dataframe with the results of the compression.
 
@@ -384,38 +352,14 @@ class ImageCompress():
         log_file : str, optional
             path to the log file. The default is False.
         """
+        super().__init__(name='ImageCompress', log_file=log_file, logger=external_logger)
         self.new_size_ratio = new_size_ratio
         self.quality = quality
         self.to_jpg = to_jpg
         self.n_attemps = n_attemps
-        self.log_file = log_file
-        if log_file is False or log_file is None:
-            self.logger = False
-        else:
-            self._set_logger(log_file)
 
         # 195.31KB, i.e. don't compress if image size is less than this
         self.min_compress_size = 200000
-
-    def _set_logger(self, log_file):
-        """Set the logger"""
-        self.logger = logging.getLogger('ImageCompress')
-        self.logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(levelname)s: %(name)s: %(funcName)s: %(message)s')
-        fh = logging.FileHandler(log_file)
-        fh.setFormatter(formatter)
-        self.logger.addHandler(fh)
-
-    def _remove_logger(self):
-        """Remove the logger"""
-        handlers = self.logger.handlers[:]
-        for handler in handlers:
-            handler.close()
-            self.logger.removeHandler(handler)
-
-    def _set_external_logger(self, logger):
-        """Set an external logger"""
-        self.logger = logger
 
     def get_new_width_height(self, image_w, image_h, size_ratio=False):
         """
@@ -499,7 +443,7 @@ class ImageCompress():
             new image file size
         """
         if self.logger is not False:
-            self.logger.info(f"{_s6}Compressing image to {exp_fl}: width={width}, height={height}, "
+            self.logger.info(f"Compressing image to {exp_fl}: width={width}, height={height}, "
                              f"quality={quality}")
         if width is False or height is False:
             compress_img = img
@@ -545,7 +489,7 @@ class ImageCompress():
             status of the compression. 'Compressed', 'NOT Compressed', or 'Failed'
         """
         if self.logger is not False:
-            self.logger.info(f"{_s2}Compressing {image_path}")
+            self.logger.info(f"Compressing {image_path}")
         status = 'Not Started'
         if self.to_jpg:
             export_path = export_path.with_suffix('.jpg')
@@ -570,9 +514,9 @@ class ImageCompress():
                     min_size_str = get_size_format(self.min_compress_size)
                     # Don't try to compress if it's under '195.31KB'
                     if self.logger is not False:
-                        self.logger.info(f"{_s4}Image size is less than {min_size_str}. "
+                        self.logger.info(f"Image size is less than {min_size_str}. "
                                          "Not compressing")
-                    status = 'NOT Compressed'
+                    status = _not_compressed
                     compress = False
                     new_image_size = image_size
                     shutil.copy(image_path, export_path)
@@ -583,10 +527,10 @@ class ImageCompress():
                                                          new_h,
                                                          quality,
                                                          export_path)
-                    status = 'Compressed'
+                    status = _compressed
                     if new_image_size is False:
                         # if the image can't be resized then don't try to compress it
-                        status = 'Failed'
+                        status = _failed
                         compress = False
                         new_image_size = image_size
                     elif new_image_size > 5000000:  # '4.77MB'
@@ -604,7 +548,7 @@ class ImageCompress():
                     saving_diff_str = '-'
                 elif new_image_size > image_size:
                     if self.logger is not False:
-                        self.logger.warning(f"{_s6}New image size is greater than original image "
+                        self.logger.warning("New image size is greater than original image "
                                             "size. Not compressing")
                     saving_diff_str = '-'
                     shutil.copy(image_path, export_path)
@@ -621,10 +565,10 @@ class ImageCompress():
                                         })
         except UnidentifiedImageError:
             if self.logger is not False:
-                self.logger.error(f"{_s6}Failed to compress due to UnidentifiedImageError")
+                self.logger.error("Failed to compress due to UnidentifiedImageError")
             results = pd.DataFrame({'Image': [image_path],
                                     'Image_size': ['-'],
-                                    'Status': ['Failed'],
+                                    'Status': [_failed],
                                     'New_size': ['-'],
                                     'Compress %': ['-'],
                                     'Attempts': [0],

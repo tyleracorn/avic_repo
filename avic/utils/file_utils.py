@@ -42,15 +42,22 @@ def rename_dir(path, src, dst):
         path with src replaced by dst
     """
     from pathlib import Path
+    path = Path(path)
     # convert to list so that we can change elements
     parts = list(path.parts)
 
     src = str(src)
     dst = str(dst)
     # replace part that matches src with dst
-    parts[parts.index(src)] = dst
-
-    return Path(*parts)
+    try:
+        parts[parts.index(src)] = dst
+        return Path(*parts)
+    except ValueError:
+        if src in str(path):
+            new_path = str(path).replace(src, dst)
+            return Path(new_path)
+        else:
+            raise ValueError(f"{src} not found in {path}")
 
 
 def delete_empty_dir(path):
