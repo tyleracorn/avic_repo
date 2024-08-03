@@ -149,7 +149,8 @@ class MultiImageCompression(ClassWithLogger):
                                               log_file=False,
                                               external_logger=self.logger)
 
-    def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed'):
+    def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed',
+                failed_dir='failed'):
         """
         Set the directories for the image compression
 
@@ -179,6 +180,7 @@ class MultiImageCompression(ClassWithLogger):
         self.starting_dir = Path(starting_dir)
         self.compress_dir = Path(compress_dir)
         self.processed_dir = Path(processed_dir)
+        self.failed_dir = Path(failed_dir)
         if self.logger is not False:
             self.logger.info(f"starting_dir: {self.starting_dir}")
             self.logger.info(f"compress_dir: {self.compress_dir}")
@@ -198,6 +200,7 @@ class MultiImageCompression(ClassWithLogger):
         self.logger.info(f"Getting compress paths for {len(files)} files")
         fl_compress_dict = {}
         for fl in files:
+            fail_fl = rename_dir(fl, self.starting_dir, self.failed_dir)
             if self.overwrite is False:
                 comp_fl = rename_dir(fl,
                                      self.starting_dir,
@@ -212,9 +215,12 @@ class MultiImageCompression(ClassWithLogger):
             else:
                 comp_fl = fl
                 proc_fl = False
-            fl_compress_dict[fl.name] = {'fl': fl,
-                                         'comp_fl': comp_fl,
-                                         'proc_fl': proc_fl}
+            fl_compress_dict[fl.name] = {
+                'fl': fl,
+                'comp_fl': comp_fl,
+                'proc_fl': proc_fl,
+                'fail_fl': fail_fl,
+                }
         return fl_compress_dict
 
     def _compress_singlesubdir_images(self, files, folder_name, progress_bar=True):
@@ -239,24 +245,35 @@ class MultiImageCompression(ClassWithLogger):
             for flid, fl in enumerate(tqdm(files, desc=f'{folder_name}: ')):
                 comp_fl = comp_paths[fl.name]['comp_fl']
                 proc_fl = comp_paths[fl.name]['proc_fl']
-                stats, cstatus = self.image_compressor.compress_image(fl,
-                                                                      export_path=comp_fl)
+                fail_dir = comp_paths[fl.name]['fail_fl'].parent
+                stats, cstatus = self.image_compressor.compress_image(
+                    fl,
+                    export_path=comp_fl,
+                    fail_dir=fail_dir,
+                    )
                 compres_stats_list.append(stats)
-                self._shuffle_files(compress_status=cstatus,
-                                    img_file=fl,
-                                    proc_file=proc_fl,
-                                    compress_file=comp_fl)
+                self._shuffle_files(
+                    compress_status=cstatus,
+                    img_file=fl,
+                    proc_file=proc_fl,
+                    compress_file=comp_fl,
+                    )
         else:
             for flid, fl in enumerate(files):
                 comp_fl = comp_paths[fl.name]['comp_fl']
                 proc_fl = comp_paths[fl.name]['proc_fl']
-                stats, cstatus = self.image_compressor.compress_image(fl,
-                                                                      export_path=comp_fl)
+                stats, cstatus = self.image_compressor.compress_image(
+                    fl,
+                    export_path=comp_fl,
+                    fail_dir=self.failed_dir,
+                    )
                 compres_stats_list.append(stats)
-                self._shuffle_files(compress_status=cstatus,
-                                    img_file=fl,
-                                    proc_file=proc_fl,
-                                    compress_file=comp_fl)
+                self._shuffle_files(
+                    compress_status=cstatus,
+                    img_file=fl,
+                    proc_file=proc_fl,
+                    compress_file=comp_fl,
+                    )
         if len(compres_stats_list) > 0:
             compress_stats = pd.concat(compres_stats_list, ignore_index=True)
         else:
@@ -470,7 +487,41 @@ class ImageCompress(ClassWithLogger):
                 return False
         return exp_fl.stat().st_size
 
-    def compress_image(self, image_path, export_path=False):
+    def _check_image_corruption(self, image_path):
+        """
+        Check if the image is corrupted
+
+        Parameters
+        ----------
+        image_path : str
+            path to the image file
+        """
+        failed = False
+        try:
+            with Image.open(image_path) as img:
+                img.verify()
+        except (IOError, SyntaxError):
+            failed = True
+            if self.logger is not False:
+                self.logger.error("Failed to compress due to IOError or SyntaxError")
+        try:
+            with Image.open(image_path) as img:
+                img.load()
+        except OSError as e:
+            if self.logger is not False:
+                self.logger.error(f"Failed to compress due to OSError: {e}")
+            failed = True
+        except UnidentifiedImageError:
+            if self.logger is not False:
+                self.logger.error("Failed to compress due to UnidentifiedImageError")
+            failed = True
+        except Exception as e:
+            if self.logger is not False:
+                self.logger.error(f"Failed to compress due to {e}")
+            failed = True
+        return failed
+
+    def compress_image(self, image_path, export_path=False, fail_dir=False):
         """Compression function that given an image path, it will compress the image to try to
         save space. It will return a dataframe with the results of the compression.
 
@@ -480,6 +531,9 @@ class ImageCompress(ClassWithLogger):
             path to the image file
         export_path : str, optional
             path to export the compressed image. The default is False.
+        fail_dir : str, optional
+            if the image fails to compress, then it will move the image to this directory. if False
+            then it won't move the image. The default is False.
 
         Returns
         -------
@@ -492,7 +546,30 @@ class ImageCompress(ClassWithLogger):
             self.logger.info(f"Compressing {image_path}")
         status = 'Not Started'
         if self.to_jpg:
-            export_path = export_path.with_suffix('.jpg')
+            if export_path is False:
+                export_path = image_path.with_suffix('.jpg')
+            else:
+                export_path = export_path.with_suffix('.jpg')
+        if export_path is False:
+            export_path = image_path
+
+        if self._check_image_corruption(image_path) is True:
+            results = pd.DataFrame(
+                {
+                    'Image': [image_path],
+                    'Image_size': ['-'],
+                    'Status': [_failed],
+                    'New_size': ['-'],
+                    'Compress %': ['-'],
+                    'Attempts': [0],
+                }
+                )
+            if fail_dir is not False:
+                fail_path = Path(fail_dir).joinpath(image_path.name)
+                if fail_path.parent.is_dir() is False:
+                    fail_path.parent.mkdir(parents=True)
+                shutil.move(image_path, fail_path)
+            return results, _failed
         # load the image to memory
         try:
             with Image.open(image_path) as img:
@@ -502,9 +579,11 @@ class ImageCompress(ClassWithLogger):
                 image_w, image_h = img.size
 
                 # Determine if you need a new size
-                new_w, new_h, size_ratio = self.get_new_width_height(image_w,
-                                                                     image_h,
-                                                                     size_ratio=False)
+                new_w, new_h, size_ratio = self.get_new_width_height(
+                    image_w,
+                    image_h,
+                    size_ratio=False,
+                    )
                 # determine quality
                 quality = self.get_quality(image_size)
 
@@ -522,11 +601,13 @@ class ImageCompress(ClassWithLogger):
                     shutil.copy(image_path, export_path)
                 while compress is True and attempts < 3:
                     attempts += 1
-                    new_image_size = self._compress_save(img,
-                                                         new_w,
-                                                         new_h,
-                                                         quality,
-                                                         export_path)
+                    new_image_size = self._compress_save(
+                        img,
+                        new_w,
+                        new_h,
+                        quality,
+                        export_path,
+                        )
                     status = _compressed
                     if new_image_size is False:
                         # if the image can't be resized then don't try to compress it
@@ -535,9 +616,11 @@ class ImageCompress(ClassWithLogger):
                         new_image_size = image_size
                     elif new_image_size > 5000000:  # '4.77MB'
                         size_ratio -= 10
-                        new_w, new_h, size_ratio = self.get_new_width_height(image_w,
-                                                                             image_h,
-                                                                             size_ratio=size_ratio)
+                        new_w, new_h, size_ratio = self.get_new_width_height(
+                            image_w,
+                            image_h,
+                            size_ratio=size_ratio,
+                            )
                         quality -= 10
                     elif new_image_size > 2000000:  # '1.91MB'
                         quality -= 10
@@ -556,21 +639,27 @@ class ImageCompress(ClassWithLogger):
                 else:
                     saving_diff = (image_size - new_image_size)/image_size
                     saving_diff_str = f"{saving_diff:.1%}"
-                results = pd.DataFrame({'Image': [image_path],
-                                        'Image_size': [get_size_format(image_size)],
-                                        'Status': [status],
-                                        'New_size': [get_size_format(new_image_size)],
-                                        'Compress %': [saving_diff_str],
-                                        'Attempts': [attempts],
-                                        })
+                results = pd.DataFrame(
+                    {
+                        'Image': [image_path],
+                        'Image_size': [get_size_format(image_size)],
+                        'Status': [status],
+                        'New_size': [get_size_format(new_image_size)],
+                        'Compress %': [saving_diff_str],
+                        'Attempts': [attempts],
+                    }
+                    )
         except UnidentifiedImageError:
             if self.logger is not False:
                 self.logger.error("Failed to compress due to UnidentifiedImageError")
-            results = pd.DataFrame({'Image': [image_path],
-                                    'Image_size': ['-'],
-                                    'Status': [_failed],
-                                    'New_size': ['-'],
-                                    'Compress %': ['-'],
-                                    'Attempts': [0],
-                                    })
+            results = pd.DataFrame(
+                {
+                    'Image': [image_path],
+                    'Image_size': ['-'],
+                    'Status': [_failed],
+                    'New_size': ['-'],
+                    'Compress %': ['-'],
+                    'Attempts': [0],
+                }
+                )
         return results, status
