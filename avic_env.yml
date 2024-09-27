@@ -1,0 +1,45 @@
+name: video
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - beautifulsoup4
+  - ipython
+  - ipywidgets
+  - jedi
+  - jinja2
+  - jpeg
+  - jupyter
+  - jupyter_client
+  - jupyterlab
+  - jupyterlab_widgets
+  - matplotlib
+  - mkl
+  - nbclient
+  - nbconvert
+  - nbformat
+  - nest-asyncio
+  - notebook
+  - numpy
+  - pandas
+  - pillow
+  - pip
+  - psutil
+  - pyarrow
+  - pylint
+  - pyopenssl
+  - pyqt
+  - sqlite
+  - scikit-image
+  - scikit-learn
+  - scipy
+  - seaborn=0.13
+  - setuptools
+  - tqdm
+  - widgetsnbextension
+  - xlrd
+  - xlsxwriter
+  - pip:
+    - ffmpeg-python==0.2.0
+    - future==0.18.3
+
