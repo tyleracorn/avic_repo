@@ -8,6 +8,8 @@ from warnings import warn
 import logging
 import shutil
 import pandas as pd
+import subprocess
+import re
 
 _video_suffixes = ['.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.mkv', '.mov', '.wmv', '.mts', '.ts']
 
@@ -546,38 +548,45 @@ class VideoCompress:
         self.out_settings = {}
 
         self.out_settings['c:v'] = 'libx264'
-        bitrate = '512K'
+        self.out_settings['preset'] = 'medium'
+        self.out_settings['crf'] = 28  # Adjust CRF value as needed
+        # self.out_settings['profile:v'] = 'high'
+        # self.out_settings['tune'] = 'film'
 
-        if self.meta['audio_codec_name'] == 'aac':
+        # check for meta audio bitrate
+        if 'bit_rate' in self.meta['audio']:
+            if int(self.meta['audio']['bit_rate']) > 128000:  # > 128Kbps
+                self.out_settings['c:a'] = 'aac'
+                self.out_settings['b:a'] = '96K'  # Lower to 96Kbps
+        elif self.meta['audio_codec_name'] == 'aac':
             self.out_settings['c:a'] = 'copy'
         else:
             self.out_settings['c:a'] = 'aac'
-            self.out_settings['b:a'] = '128K'
+            self.out_settings['b:a'] = '96K'  # Lower audio bitrate
 
         video_height = self.meta['video']['height']
         self.video_height_in = video_height
 
-        if video_height >= 1080:
-            convert_to = 720
-            bitrate = '1M'
+        if self.change_resolution is False:
+            convert_to = video_height
         elif video_height >= 480:
             convert_to = 480
+            if self.scale == 'auto':
+                self.out_settings['vf'] = f"scale=-2:{convert_to},unsharp=5:5:1.0:5:5:0.0"
+            else:
+                if isinstance(self.scale, dict):
+                    self.out_settings['vf'] = f"scale={self.scale['width']}:{self.scale['height']}"
+                else:
+                    self.out_settings['vf'] = f"scale={self.scale}"
         else:
             convert_to = video_height
 
-        if self.change_resolution is False:
-            convert_to = video_height
-
-        if self.scale == 'auto':
-            self.scale = {'width': -2,
-                          'height': convert_to}
         self.video_height_out = convert_to
-        if self.change_bitrate is True:
-            self.out_settings['b:v'] = bitrate
+
         if self.logger is not False:
             self.logger.info(f"Output Height: {self.video_height_out}")
 
-    def _output_with_scale(self, video_stream, audio_stream):
+    def _convert_with_ffmpeg(self, video_stream, audio_stream):
         """
         Output video with scaling
 
@@ -587,6 +596,8 @@ class VideoCompress:
             video stream
         audio_stream : ffmpeg stream
             audio stream
+        progress_bar : bool, optional
+            show progress bar, by default False
         """
         if self.logger is not False:
             self.logger.info(f"Outputting {self.video_out.name} with scaling")
@@ -594,42 +605,16 @@ class VideoCompress:
         output_video_stream = video_stream.filter('scale',
                                                   **self.scale)
 
-        video_audio_stream = ffmpeg.output(output_video_stream,
-                                           audio_stream,
-                                           str(self.video_out),
-                                           **self.out_settings)
+        video_audio_stream = ffmpeg.output(
+            output_video_stream,
+            audio_stream,
+            str(self.video_out),
+            **self.out_settings)
         try:
-            out, err = video_audio_stream.overwrite_output().run(capture_stdout=True,
-                                                                 capture_stderr=True)
-            return True
-        except ffmpeg.Error as err:
-            if self.logger is not False:
-                err_msg = 'stderr: ' + err.stderr.decode('utf8')
-                self.logger.exception(err_msg)
-            return False
-
-    def _output_no_scale(self, video_stream, audio_stream):
-        """
-        Output video without scaling
-
-        Parameters
-        ----------
-        video_stream : ffmpeg stream
-            video stream
-        audio_stream : ffmpeg stream
-            audio stream
-        """
-        if self.logger is not False:
-            self.logger.info(f"Outputting {self.video_out.name} without scaling")
-
-        output_video_stream = video_stream
-        video_audio_stream = ffmpeg.output(output_video_stream,
-                                           audio_stream,
-                                           str(self.video_out),
-                                           **self.out_settings)
-        try:
-            out, err = video_audio_stream.overwrite_output().run(capture_stdout=True,
-                                                                 capture_stderr=True)
+            out, err = video_audio_stream.overwrite_output().run(
+                capture_stdout=True,
+                capture_stderr=True,
+            )
             return True
         except ffmpeg.Error as err:
             if self.logger is not False:
@@ -697,7 +682,7 @@ class VideoCompress:
             if self.video_in.is_file():
                 self.video_in.unlink()
 
-    def convert_video(self):
+    def convert_video(self, progress_bar=False):
         """
         Convert videos using ffmpeg
 
@@ -711,12 +696,21 @@ class VideoCompress:
         video_stream = ffmpeg.input(str(self.video_in)).video
         audio_stream = ffmpeg.input(str(self.video_in)).audio
 
-        if self.video_height_out == 480:
-            self.converted = self._output_no_scale(video_stream,
-                                                   audio_stream)
+        self.converted = self._convert_with_ffmpeg(
+            video_stream,
+            audio_stream,
+        )
         if not self.converted:
-            self.converted = self._output_with_scale(video_stream,
-                                                     audio_stream)
+            if 'v:f' in self.out_settings:
+                # See if you can output without scaling
+                if self.logger is not False:
+                    self.logger.info(f"Outputting {self.video_out.name} without scaling")
+                self.out_settings.pop('v:f')
+                self.converted = self._convert_with_ffmpeg(
+                    video_stream,
+                    audio_stream,
+                )
+
         if self.converted:
             self._check_logic()
             conv_fl_size = self.video_out.stat().st_size
