@@ -2,7 +2,7 @@ name: video
 channels:
   - defaults
 dependencies:
-  - python=3.10
+  - python=3.12
   - beautifulsoup4
   - ipython
   - ipywidgets
