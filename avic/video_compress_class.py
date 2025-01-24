@@ -602,11 +602,8 @@ class VideoCompress:
         if self.logger is not False:
             self.logger.info(f"Outputting {self.video_out.name} with scaling")
 
-        output_video_stream = video_stream.filter('scale',
-                                                  **self.scale)
-
         video_audio_stream = ffmpeg.output(
-            output_video_stream,
+            video_stream,
             audio_stream,
             str(self.video_out),
             **self.out_settings)
