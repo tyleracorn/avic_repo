@@ -35,6 +35,7 @@ def get_files_to_compress_recursive(main_dir, img_suffixes=['.jpg', '.jpeg', '.p
     sub_directories: list
         list of subdirectories
     """
+    img_suffixes = [suffix.lower() for suffix in img_suffixes]
     sub_directories = [folder for folder in Path(main_dir).glob('*') if folder.is_dir()]
     files = []
     files = [fl for fl in main_dir.glob('*') if fl.is_file()]
@@ -306,9 +307,13 @@ class MultiImageCompression(ClassWithLogger):
         itself to iterate through all subdirectories
         """
         self.logger.info(f"Checking for files/subdirs in {subdir}")
-        files, sub_directories = get_files_to_compress_recursive(subdir)
+        files, sub_directories = get_files_to_compress_recursive(
+            subdir,
+            img_suffixes=self.img_suffixes,
+        )
         compress_stats = []
         if len(files) > 0:
+            self.logger.info(f"Compressing {len(files)} files in {subdir}")
             cs = self._compress_singlesubdir_images(files, subdir, progress_bar)
             compress_stats.append(cs)
         if len(sub_directories) > 0:
@@ -570,6 +575,12 @@ class ImageCompress(ClassWithLogger):
                     fail_path.parent.mkdir(parents=True)
                 shutil.move(image_path, fail_path)
             return results, _failed
+
+        # Force compress if we are forcing jpg and the image is not a jpg
+        if self.to_jpg and image_path.suffix.lower() not in ['.jpg', '.jpeg']:
+            force_compress = True
+        else:
+            force_compress = False
         # load the image to memory
         try:
             with Image.open(image_path) as img:
@@ -587,9 +598,10 @@ class ImageCompress(ClassWithLogger):
                 # determine quality
                 quality = self.get_quality(image_size)
 
+
                 compress = True
                 attempts = 0
-                if image_size < self.min_compress_size:
+                if image_size < self.min_compress_size and force_compress is False:
                     min_size_str = get_size_format(self.min_compress_size)
                     # Don't try to compress if it's under '195.31KB'
                     if self.logger is not False:
