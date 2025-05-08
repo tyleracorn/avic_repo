@@ -61,6 +61,7 @@ class MultiVideoCompress:
         """
 
         self.stats_fl = stats_fl
+        self._files = False
 
         if log_file is False or log_file is None:
             self.logger = False
@@ -205,6 +206,7 @@ class MultiVideoCompress:
                               f"progress_bar={progress_bar}"))
 
         comp_paths = self._get_compress_paths(files)
+        self._files = comp_paths
 
         if progress_bar:
             for flid, fl in enumerate(tqdm(files, desc=f'{folder_name}: ')):
@@ -521,7 +523,7 @@ class VideoCompress:
         meta : dict
             dictionary of video metadata"""
 
-        info = ffmpeg.probe(self.video_in)
+        info = ffmpeg.probe(str(self.video_in))
         streams = info['streams']
 
         meta = {}
@@ -549,7 +551,8 @@ class VideoCompress:
 
         self.out_settings['c:v'] = 'libx264'
         self.out_settings['preset'] = 'medium'
-        self.out_settings['crf'] = 28  # Adjust CRF value as needed
+        self.out_settings['crf'] = 20  # Adjust CRF value as needed
+        self.out_settings['x264-params'] = 'no-dct-decimate=1:deblock=-1,-1'
         # self.out_settings['profile:v'] = 'high'
         # self.out_settings['tune'] = 'film'
 
@@ -572,7 +575,7 @@ class VideoCompress:
         elif video_height >= 480:
             convert_to = 480
             if self.scale == 'auto':
-                self.out_settings['vf'] = f"scale=-2:{convert_to},unsharp=5:5:1.0:5:5:0.0"
+                self.out_settings['vf'] = f"scale=-2:{convert_to},unsharp=5:5:1.0:5:5:0.5"
             else:
                 if isinstance(self.scale, dict):
                     self.out_settings['vf'] = f"scale={self.scale['width']}:{self.scale['height']}"
@@ -581,6 +584,8 @@ class VideoCompress:
         else:
             convert_to = video_height
 
+        if convert_to == 720:
+            self.out_settings['crf'] = 22
         self.video_height_out = convert_to
 
         if self.logger is not False:
