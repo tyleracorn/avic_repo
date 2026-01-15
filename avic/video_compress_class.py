@@ -17,6 +17,18 @@ _s = ' '
 _s2 = 2*_s
 _s4 = 4*_s
 
+VIDEO_DEFAULTS = {
+    "c:v": "libx264",
+    "preset": "medium",
+    "crf": 20,
+    "x264-params": "no-dct-decimate=1:deblock=-1,-1",
+}
+
+AUDIO_DEFAULTS = {
+    "c:a": "aac",
+    "b:a": "96K",
+}
+
 
 def _get_files_to_compress_recursive(main_dir, fl_suffixes='default'):
     """
@@ -74,11 +86,15 @@ class MultiVideoCompress:
             self.logger = logging.getLogger('MultiVideoCompress')
             self.logger.setLevel(logging.INFO)
 
+        self._video_suffixes = _video_suffixes
         self._compress_stats_list = []
         self.compress_stats = None
         self.total_files = 0
         self.total_file_size_bytes = 0
         self.total_conv_fl_size_bytes = 0
+        self.video_quality = 'standard'
+        self.audio_policy = 'auto'
+        self.resolution_policy = 'auto'
 
     def _add_log_handler(self, log_file):
         """Add the log file handler to the logger"""
@@ -180,8 +196,7 @@ class MultiVideoCompress:
             self.total_conv_fl_size_bytes += self.video_compress.conv_fl_size_bytes
         return stats
 
-    def _compress_singlesubdir(self, files, folder_name, progress_bar=True, change_resolution=True,
-                               keep_larger_video=False, change_bitrate=True):
+    def _compress_singlesubdir(self, files, folder_name, progress_bar=True):
         """
         compress the files in a subdirectory
 
@@ -193,13 +208,6 @@ class MultiVideoCompress:
             name of the subdirectory which is used in the progress bar if progress_bar is True
         progress_bar : bool, optional
             if True, then it will show a progress bar. The default is True.
-        change_resolution : bool, optional
-            change the resolution of the video. If True will downgrade from 1080p to 720p, etc
-            stopping at 480p
-        keep_larger_video : bool, optional
-            keep the larger video, by default False
-        change_bitrate : bool, optional
-            change the bitrate of the video to try to compress it, by default True
         """
         if self.logger is not False:
             self.logger.info((f"Compressing {len(files)} files in {folder_name}. "
@@ -210,23 +218,21 @@ class MultiVideoCompress:
 
         if progress_bar:
             for flid, fl in enumerate(tqdm(files, desc=f'{folder_name}: ')):
-                self.video_convert(video_in=comp_paths[fl.name]['fl'],
-                                   video_out=comp_paths[fl.name]['comp_fl'],
-                                   proc_dir=comp_paths[fl.name]['proc_dir'],
-                                   change_resolution=change_resolution,
-                                   keep_larger_video=keep_larger_video,
-                                   change_bitrate=change_bitrate)
+                self.video_convert(
+                    video_in=comp_paths[fl.name]['fl'],
+                    video_out=comp_paths[fl.name]['comp_fl'],
+                    proc_dir=comp_paths[fl.name]['proc_dir'],
+                )
                 stats = self._get_stats()
                 self._compress_stats_list.append(stats)
 
         else:
             for flid, fl in enumerate(files):
-                self.video_convert(video_in=comp_paths[fl.name]['fl'],
-                                   video_out=comp_paths[fl.name]['comp_fl'],
-                                   proc_dir=comp_paths[fl.name]['proc_dir'],
-                                   change_resolution=change_resolution,
-                                   keep_larger_video=keep_larger_video,
-                                   change_bitrate=change_bitrate)
+                self.video_convert(
+                    video_in=comp_paths[fl.name]['fl'],
+                    video_out=comp_paths[fl.name]['comp_fl'],
+                    proc_dir=comp_paths[fl.name]['proc_dir'],
+                )
                 stats = self._get_stats()
                 self._compress_stats_list.append(stats)
         if len(self._compress_stats_list) > 0:
@@ -235,8 +241,7 @@ class MultiVideoCompress:
                 self.compress_stats.to_csv(self.stats_fl,
                                            index=False)
 
-    def _compress_files_subdir(self, subdir, progress_bar=True, change_resolution=True,
-                               keep_larger_video=False, change_bitrate=True):
+    def _compress_files_subdir(self, subdir, progress_bar=True):
         """
         iterate through all subdirectories and compress the files. This will recursively call
         itself to iterate through all subdirectories
@@ -247,34 +252,28 @@ class MultiVideoCompress:
             path to the subdirectory
         progress_bar : bool, optional
             if True, then it will show a progress bar for each subdirectory. The default is True.
-        change_resolution : bool, optional
-            change the resolution of the video. If True will downgrade from 1080p to 720p, etc
-            stopping at 480p
-        keep_larger_video : bool, optional
-            keep the larger video, by default False
-        change_bitrate : bool, optional
-            change the bitrate of the video to try to compress it, by default True
         """
+
         if self.logger is not False:
             self.logger.info(f"Checking for files/subdirs in {subdir}")
 
-        files, sub_directories = _get_files_to_compress_recursive(subdir)
+        files, sub_directories = _get_files_to_compress_recursive(
+            subdir, fl_suffixes=self._video_suffixes,
+            )
 
         if len(files) > 0:
-            self._compress_singlesubdir(files,
-                                        subdir,
-                                        progress_bar,
-                                        change_resolution=change_resolution,
-                                        keep_larger_video=keep_larger_video,
-                                        change_bitrate=change_bitrate)
+            self._compress_singlesubdir(
+                files,
+                subdir,
+                progress_bar
+            )
 
         if len(sub_directories) > 0:
             for sub_dir in sub_directories:
-                self._compress_files_subdir(sub_dir,
-                                            progress_bar=progress_bar,
-                                            change_resolution=change_resolution,
-                                            keep_larger_video=keep_larger_video,
-                                            change_bitrate=change_bitrate)
+                self._compress_files_subdir(
+                    sub_dir,
+                    progress_bar=progress_bar,
+                )
 
     def set_dir(self, starting_dir, compress_dir='compressed', processed_dir='processed'):
         """
@@ -311,8 +310,66 @@ class MultiVideoCompress:
             self.logger.info(f"compress_dir: {self.compress_dir}")
             self.logger.info(f"processed_dir: {self.processed_dir}")
 
-    def video_convert(self, video_in, video_out, proc_dir, scale='auto', change_resolution=True,
-                      keep_larger_video=False, change_bitrate=True):
+    def set_video_suffixes(self, overwrite=None, append=None, verbose=False):
+        """
+        Set the video suffixes to search for when compressing files
+
+        Parameters
+        ----------
+        overwrite : list, optional
+            list of suffixes to overwrite the current suffixes, by default None
+        append : list, optional
+            list of suffixes to append to the current suffixes, by default None
+        """
+        from .utils.utils import listify
+        if overwrite is not None:
+            self._video_suffixes = overwrite
+        if append is not None:
+            # append only if it is not already in the list
+            append = listify(append)
+            append = [suf for suf in append if suf not in self._video_suffixes]
+
+            self._video_suffixes.extend(append)
+        if self.logger is not False:
+            self.logger.info(f"Video Suffixes: {self._video_suffixes}")
+        if verbose:
+            print(f"Video Suffixes: {self._video_suffixes}")
+
+    def update_defaults(self, video_quality='standard', audio_policy='auto',
+                        resolution_policy='auto', force_mp4_output=True, keep_larger_video=False):
+        """
+        Update the default settings for the VideoCompress class
+
+        Parameters
+        ----------
+        video_quality : str, optional
+            'standard' (CRF 20), 'high' (CRF 18), 'fast' (preset=fast, CRF 22), by default
+            'standard'
+        audio_policy : str, optional
+            'auto' (lower bitrate if >128k, copy AAC otherwise),
+            'force_aac' (always reencode to AAC 96k),
+            'copy' (always copy if AAC), by default 'auto'
+        resolution_policy : str, optional
+            'auto' (downscale 1080p→720, 480p stays 480),
+            'keep' (no resolution change),
+            'force_720' (always scale to 720),
+            'force_480' (always scale to 480), by default 'auto'
+        force_mp4_output : bool, optional
+            Force the output video to be mp4 even if it creates larger filesize, by default True
+        keep_larger_video : bool, optional
+            Keep the larger video after compression, by default False
+        """
+        self.video_quality = video_quality
+        self.audio_policy = audio_policy
+        self.resolution_policy = resolution_policy
+        self.force_mp4_output = force_mp4_output
+        self.keep_larger_video = keep_larger_video
+        if self.logger is not False:
+            self.logger.info(f"Video Quality: {self.video_quality}")
+            self.logger.info(f"Audio Policy: {self.audio_policy}")
+            self.logger.info(f"Resolution Policy: {self.resolution_policy}")
+
+    def video_convert(self, video_in, video_out, proc_dir):
         """Convert a video using the VideoCompress class
 
         Parameters
@@ -321,34 +378,34 @@ class MultiVideoCompress:
             path to video file
         video_out : Path
             path to output video file
-        scale : dict, optional
-            dictionary of scale settings, by default 'auto'
-        change_resolution : bool, optional
-            change the resolution of the video. If True will downgrade from 1080p to 720p, etc
-            stopping at 480p, by default True
-        keep_larger_video : bool, optional
-            keep the larger video, by default False
-        change_bitrate : bool, optional
-            change the bitrate of the video to try to compress it, by default True
         """
         if self.logger is not False:
             self.logger.info(f"Compressing {video_in.name} to {video_out.name}")
-        self.video_compress = VideoCompress(video_in,
-                                            video_out,
-                                            scale=scale,
-                                            external_logger=self.logger,
-                                            warn_msg=False,
-                                            change_resolution=change_resolution,
-                                            change_bitrate=change_bitrate)
+        self.video_compress = VideoCompress(
+            video_in,
+            video_out,
+            scale='auto',
+            external_logger=self.logger,
+            warn_msg=False,
+            change_resolution=True,
+            change_bitrate=True
+        )
 
-        self.video_compress.update_logic(keep_larger_video=keep_larger_video,
-                                         delete_original=True,
-                                         copy_original_if_not_converted=True,
-                                         proccessed_folder=proc_dir)
+        self.video_compress.update_logic(
+            keep_larger_video=self.keep_larger_video,
+            delete_original=True,
+            copy_original_if_not_converted=True,
+            proccessed_folder=proc_dir,
+            force_mp4_output=self.force_mp4_output
+        )
+        self.video_compress.set_defaults(
+            video_quality=self.video_quality,
+            audio_policy=self.audio_policy,
+            resolution_policy=self.resolution_policy,
+        )
         self.video_compress.convert_video()
 
-    def compress_files(self, progress_bar=True, change_resolution=True, keep_larger_video=False,
-                       change_bitrate=True):
+    def compress_files(self, progress_bar=True):
         """
         Compress all videos in the starting directory.
 
@@ -356,40 +413,35 @@ class MultiVideoCompress:
         ----------
         progress_bar : bool, optional
             if True, then it will show a progress bar for each subdirectory. The default is True.
-        change_resolution : bool, optional
-            change the resolution of the video. If True will downgrade from 1080p to 720p, etc
-            stopping at 480p
-        keep_larger_video : bool, optional
-            keep the larger video, by default False
-        change_bitrate : bool, optional
-            change the bitrate of the video to try to compress it, by default True
         """
+        from wakepy import keep
         # add the log file handler
         if self.logger is not False:
             self._add_log_handler(log_file=self.log_file)
-        self._compress_files_subdir(self.starting_dir,
-                                    progress_bar=progress_bar,
-                                    change_resolution=change_resolution,
-                                    keep_larger_video=keep_larger_video,
-                                    change_bitrate=change_bitrate)
+        # Force keep the computer awake during the process
+        with keep.running():
+            self._compress_files_subdir(
+                self.starting_dir,
+                progress_bar=progress_bar,
+            )
 
-        if self.logger is not False:
-            self.logger.info(f"Total Files: {self.total_files}")
-            total_file_size = get_size_format(self.total_file_size_bytes)
-            self.logger.info(f"Total File Size: {total_file_size}")
-            total_conv_fl_size = get_size_format(self.total_conv_fl_size_bytes)
-            self.logger.info(f"Total Converted File Size: {total_conv_fl_size}")
-            conversion_ratio = self.total_conv_fl_size_bytes/self.total_file_size_bytes
-            self.logger.info(f"Total Conversion Ratio: {conversion_ratio:0.1%}")
+            if self.logger is not False:
+                self.logger.info(f"Total Files: {self.total_files}")
+                total_file_size = get_size_format(self.total_file_size_bytes)
+                self.logger.info(f"Total File Size: {total_file_size}")
+                total_conv_fl_size = get_size_format(self.total_conv_fl_size_bytes)
+                self.logger.info(f"Total Converted File Size: {total_conv_fl_size}")
+                conversion_ratio = self.total_conv_fl_size_bytes/self.total_file_size_bytes
+                self.logger.info(f"Total Conversion Ratio: {conversion_ratio:0.1%}")
 
-            print(f"Total Files: {self.total_files}")
-            print(f"Total File Size: {total_file_size}")
-            print(f"Total Converted File Size: {total_conv_fl_size}")
-            print(f"Total Conversion Ratio: {conversion_ratio:0.1%}")
+                print(f"Total Files: {self.total_files}")
+                print(f"Total File Size: {total_file_size}")
+                print(f"Total Converted File Size: {total_conv_fl_size}")
+                print(f"Total Conversion Ratio: {conversion_ratio:0.1%}")
 
-        # close the logger
-        if self.logger is not False:
-            self._remove_log_handler(log_file=self.log_file)
+            # close the logger
+            if self.logger is not False:
+                self._remove_log_handler(log_file=self.log_file)
         return True
 
 
@@ -421,6 +473,8 @@ class VideoCompress:
         self.video_out = Path(video_out)
         self._warn_msg = warn_msg
         self._log_file = log_file
+        self.video_defaults = VIDEO_DEFAULTS.copy()
+        self.audio_defaults = AUDIO_DEFAULTS.copy()
 
         if external_logger is not False:
             self._set_external_logger(external_logger)
@@ -443,9 +497,7 @@ class VideoCompress:
         self.change_bitrate = change_bitrate
 
         self.codec = self._get_video_codec(self.video_in)
-        self._set_video_metadata()
-        self._set_output_settings()
-        self._make_output_dirs()
+
 
         self.fl_size_bytes = 0
         self.conv_fl_size_bytes = 0
@@ -456,6 +508,12 @@ class VideoCompress:
         self.delete_original = False
         self.move_original = False
         self.copy_original_if_not_converted = False
+        self.video_policy = 'auto'
+        self.audio_policy = 'auto'
+        self.set_defaults()
+        self._set_video_metadata()
+        self._set_output_settings()
+        self._make_output_dirs()
 
         self.converted = False
 
@@ -539,8 +597,113 @@ class VideoCompress:
 
         self.meta = meta
 
+    def set_defaults(self,
+                     video_quality: str = "standard",
+                     audio_policy: str = "auto",
+                     resolution_policy: str = "auto"):
+        """
+        Guided setter for defaults.
+
+        Parameters
+        ----------
+        video_quality : str
+            'standard' (CRF 20), 'high' (CRF 18), 'fast' (preset=fast, CRF 22)
+        audio_policy : str
+            'auto' (lower bitrate if >128k, copy AAC otherwise),
+            'force_aac' (always reencode to AAC 96k),
+            'copy' (always copy if AAC)
+        resolution_policy : str
+            'auto' (downscale 1080p→720, 480p stays 480),
+            'keep' (no resolution change),
+            'force_720' (always scale to 720),
+            'force_480' (always scale to 480)
+        """
+
+        # video quality presets
+        if video_quality == "standard":
+            self.video_defaults["crf"] = 20
+            self.video_defaults["preset"] = "medium"
+        elif video_quality == "high":
+            self.video_defaults["crf"] = 18
+            self.video_defaults["preset"] = "slow"
+        elif video_quality == "fast":
+            self.video_defaults["crf"] = 22
+            self.video_defaults["preset"] = "fast"
+        else:
+            if self._warn_msg:
+                warn(f"Video quality '{video_quality}' not recognized. Using 'standard' settings.")
+            self.video_defaults["crf"] = 20
+            self.video_defaults["preset"] = "medium"
+
+        # audio policy
+        self.audio_policy = audio_policy
+
+        # resolution policy
+        self.resolution_policy = resolution_policy
+
+    def _set_audio_settings(self):
+        """Set audio settings based on policy
+        """
+        if self.audio_policy == "auto":
+            # check for meta audio bitrate
+            if 'bit_rate' in self.meta['audio']:
+                if int(self.meta['audio']['bit_rate']) > 128000:  # > 128Kbps
+                    self.out_settings['c:a'] = 'aac'
+                    self.out_settings['b:a'] = '96K'  # Lower to 96Kbps
+            elif self.meta['audio_codec_name'] == 'aac':
+                self.out_settings['c:a'] = 'copy'
+            else:
+                self.out_settings['c:a'] = 'aac'
+                self.out_settings['b:a'] = '96K'  # Lower audio bitrate
+        elif self.audio_policy == "force_aac":
+            self.out_settings['c:a'] = 'aac'
+            self.out_settings['b:a'] = '96K'  # Lower audio bitrate
+        elif self.audio_policy == "copy":
+            if self.meta['audio_codec_name'] == 'aac':
+                self.out_settings['c:a'] = 'copy'
+            else:
+                if self._warn_msg:
+                    warn("Audio codec is not AAC, cannot copy. Re-encoding to AAC 96K.")
+                self.out_settings['c:a'] = 'aac'
+                self.out_settings['b:a'] = '96K'  # Lower audio bitrate
+
+    def _set_video_settings(self):
+        """Set video settings based on policy
+        Parameters
+        ----------
+        policy : str
+            'auto', 'keep', 'force_720', 'force_480'
+        """
+        # resolution rules
+        video_height = self.meta["video"]["height"]
+        self.video_height_in = video_height
+
+        if self.resolution_policy == "keep":
+            convert_to = video_height
+        elif self.resolution_policy == "force_720":
+            convert_to = 720
+        elif self.resolution_policy == "force_480":
+            convert_to = 480
+        else:  # auto
+            if video_height >= 1080:
+                convert_to = 720
+                self.out_settings["crf"] = self.video_defaults['crf']
+            elif video_height >= 480:
+                convert_to = 480
+            else:
+                convert_to = video_height
+
+        if self.change_resolution:
+            if self.scale == "auto":
+                self.out_settings["vf"] = f"scale=-2:{convert_to},unsharp=5:5:1.0:5:5:0.5"
+            elif isinstance(self.scale, dict):
+                self.out_settings["vf"] = f"scale={self.scale['width']}:{self.scale['height']}"
+            else:
+                self.out_settings["vf"] = f"scale={self.scale}"
+        self.video_height_out = convert_to
+
     def _set_output_settings(self):
-        """Set output settings for ffmpeg
+        """Set output settings for ffmpeg around
 
         Returns
         -------
@@ -549,44 +712,18 @@ class VideoCompress:
         """
         self.out_settings = {}
 
-        self.out_settings['c:v'] = 'libx264'
-        self.out_settings['preset'] = 'medium'
-        self.out_settings['crf'] = 20  # Adjust CRF value as needed
-        self.out_settings['x264-params'] = 'no-dct-decimate=1:deblock=-1,-1'
+        # Defaults
+        self.out_settings['c:v'] = self.video_defaults['c:v']
+        self.out_settings['preset'] = self.video_defaults['preset']
+        self.out_settings['crf'] = self.video_defaults['crf']  # Adjust CRF value as needed
+        self.out_settings['x264-params'] = self.video_defaults['x264-params']
         # self.out_settings['profile:v'] = 'high'
         # self.out_settings['tune'] = 'film'
 
-        # check for meta audio bitrate
-        if 'bit_rate' in self.meta['audio']:
-            if int(self.meta['audio']['bit_rate']) > 128000:  # > 128Kbps
-                self.out_settings['c:a'] = 'aac'
-                self.out_settings['b:a'] = '96K'  # Lower to 96Kbps
-        elif self.meta['audio_codec_name'] == 'aac':
-            self.out_settings['c:a'] = 'copy'
-        else:
-            self.out_settings['c:a'] = 'aac'
-            self.out_settings['b:a'] = '96K'  # Lower audio bitrate
+        # Audio settings
+        self._set_audio_settings()
 
-        video_height = self.meta['video']['height']
-        self.video_height_in = video_height
-
-        if self.change_resolution is False:
-            convert_to = video_height
-        elif video_height >= 480:
-            convert_to = 480
-            if self.scale == 'auto':
-                self.out_settings['vf'] = f"scale=-2:{convert_to},unsharp=5:5:1.0:5:5:0.5"
-            else:
-                if isinstance(self.scale, dict):
-                    self.out_settings['vf'] = f"scale={self.scale['width']}:{self.scale['height']}"
-                else:
-                    self.out_settings['vf'] = f"scale={self.scale}"
-        else:
-            convert_to = video_height
-
-        if convert_to == 720:
-            self.out_settings['crf'] = 22
-        self.video_height_out = convert_to
+        self._set_video_settings()
 
         if self.logger is not False:
             self.logger.info(f"Output Height: {self.video_height_out}")
@@ -625,7 +762,8 @@ class VideoCompress:
             return False
 
     def update_logic(self, keep_larger_video=None, delete_original=None,
-                     copy_original_if_not_converted=None, proccessed_folder=None):
+                     copy_original_if_not_converted=None, proccessed_folder=None,
+                     force_mp4_output=True):
         """Update the logic for the VideoCompress object
 
         *None values will not be updated*
@@ -640,6 +778,8 @@ class VideoCompress:
             Copy the original video if it is not converted, by default None
         proccessed_folder : str, optional
             Move the original video to the processed folder, by default None
+        force_mp4_output : bool, optional
+            Force the output video to be mp4 even if it creates larger filesize, by default True
         """
         if keep_larger_video is not None:
             self.keep_larger_video = keep_larger_video
@@ -653,35 +793,52 @@ class VideoCompress:
             self.proccessed_folder = Path(proccessed_folder)
             if self.proccessed_folder.is_dir() is False:
                 self.proccessed_folder.mkdir(parents=True)
+        self.force_mp4_output = force_mp4_output
 
     def _check_logic(self):
         """ Deal with the video files after compression based on class logic"""
         if self.logger is not False:
             self.logger.info(f"Checking logic for {self.video_out.name}")
 
-        if self.keep_larger_video is False:
-            if self.video_out.stat().st_size > self.meta['file_size']:
-                if self._warn_msg:
-                    warn("Converted file size is larger than original file size:"
-                         f" {self.video_out.name}")
-                self.video_out.unlink()
-                if self.copy_original_if_not_converted:
-                    if self.video_in.suffix != self.video_out.suffix:
-                        self.video_out = self.video_out.with_suffix(self.video_in.suffix)
+        # Flag to track whether we ended up with a valid converted file
+        converted_file_kept = True
 
-                    if self.move_original is True or self.delete_original is False:
-                        shutil.copy2(self.video_in, self.video_out)
-                    else:
-                        self.video_in.rename(self.video_out)
+        # Case: converted file is larger and we don't want to keep larger videos
+        if not self.keep_larger_video and self.video_out.stat().st_size > self.meta['file_size']:
+            if self._warn_msg:
+                warn(f"Converted file size is larger than original: {self.video_out.name}")
 
-        if self.move_original:
-            if self.delete_original:
-                self.video_in.rename(self.proccessed_folder.joinpath(self.video_in.name))
+            if self.force_mp4_output and self.video_in.suffix.lower() != '.mp4':
+                # Keep converted file anyway
+                if self.logger:
+                    self.logger.info("Forcing mp4 output, keeping converted file.")
             else:
-                shutil.copy2(self.video_in, self.proccessed_folder.joinpath(self.video_in.name))
+                # Remove converted file
+                if self.logger:
+                    self.logger.info("Removing converted file, keeping original file.")
+                if self.video_out.is_file():
+                    self.video_out.unlink()
+                converted_file_kept = False
 
-        if self.delete_original:
-            if self.video_in.is_file():
+                # Optionally restore original in place of deleted converted file
+                if self.copy_original_if_not_converted:
+                    target = self.video_out.with_suffix(self.video_in.suffix)
+                    if self.move_original or not self.delete_original:
+                        shutil.copy2(self.video_in, target)
+                    else:
+                        self.video_in.rename(target)
+                    converted_file_kept = True  # because we restored original
+
+        # Only move/delete original if we ended up with a valid output file
+        if converted_file_kept:
+            if self.move_original:
+                dest = self.proccessed_folder.joinpath(self.video_in.name)
+                if self.delete_original:
+                    self.video_in.rename(dest)
+                else:
+                    shutil.copy2(self.video_in, dest)
+
+            if self.delete_original and self.video_in.is_file():
                 self.video_in.unlink()
 
     def convert_video(self, progress_bar=False):

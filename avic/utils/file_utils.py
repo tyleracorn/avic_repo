@@ -60,6 +60,41 @@ def rename_dir(path, src, dst):
             raise ValueError(f"{src} not found in {path}")
 
 
+def get_target_path(source_path, source_base, target_base):
+    """
+    Get target path by preserving relative directory structure.
+
+    This safely handles moving files from one base directory to another
+    while maintaining the subdirectory structure.
+
+    Example:
+        source: /photos/2020/01/img.jpg
+        source_base: /photos
+        target_base: /compressed
+        result: /compressed/2020/01/img.jpg
+
+    Parameters
+    ----------
+    source_path : Path
+        The full path to the source file
+    source_base : Path
+        The base directory of the source
+    target_base : Path
+        The base directory for the target
+
+    Returns
+    -------
+    Path
+        The target path with preserved relative structure
+    """
+    from pathlib import Path
+    source_path = Path(source_path)
+    source_base = Path(source_base)
+    target_base = Path(target_base)
+    relative = source_path.relative_to(source_base)
+    return target_base.joinpath(relative)
+
+
 def delete_empty_dir(path):
     """Delete empty directories recursively starting from the path supplied"""
     from pathlib import Path

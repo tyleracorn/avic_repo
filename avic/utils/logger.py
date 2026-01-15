@@ -77,3 +77,18 @@ class ClassWithLogger:
         for handler in handlers:
             handler.close()
             self.logger.removeHandler(handler)
+
+    def log_info(self, message):
+        """Log an info message"""
+        if self.logger is not False:
+            self.logger.info(message)
+
+    def log_warning(self, message):
+        """Log a warning message"""
+        if self.logger is not False:
+            self.logger.warning(message)
+
+    def log_error(self, message):
+        """Log an error message"""
+        if self.logger is not False:
+            self.logger.error(message)
