@@ -30,6 +30,15 @@ AUDIO_DEFAULTS = {
 }
 
 
+def safe_decode(err_bytes):
+    try:
+        # First try UTF-8
+        return err_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        # Fall back to Windows-1252
+        return err_bytes.decode("windows-1252", errors="replace")
+
+
 def _get_files_to_compress_recursive(main_dir, fl_suffixes='default'):
     """
     get list of files to compress from a directory, also get all subdirectories
@@ -756,8 +765,9 @@ class VideoCompress:
             )
             return True
         except ffmpeg.Error as err:
+            self._err = err
             if self.logger is not False:
-                err_msg = 'stderr: ' + err.stderr.decode('utf8')
+                err_msg = 'stderr: ' + safe_decode(err.stderr)
                 self.logger.exception(err_msg)
             return False
 
@@ -841,6 +851,36 @@ class VideoCompress:
             if self.delete_original and self.video_in.is_file():
                 self.video_in.unlink()
 
+    def _get_video_stream(self, f_input):
+        """
+        Return the primary video stream, excluding cover art or still-image streams.
+        Parameters
+        ----------
+        f_input : ffmpeg input
+            ffmpeg input object
+        """
+        probe = ffmpeg.probe(str(self.video_in))
+        streams = probe.get("streams", [])
+
+        # Common cover-art / still-image codecs
+        skip_codecs = {"mjpeg", "png", "bmp", "gif", "webp"}
+
+
+        for s in streams:
+            if s.get("codec_type") != "video":
+                continue
+
+            codec = s.get("codec_name", "").lower()
+
+            # Skip cover art or still-image streams
+            if codec in skip_codecs:
+                continue
+
+            # This is the real video stream
+            return f_input[f"v:{s['index']}"]
+
+        raise RuntimeError("No usable video stream found.")
+
     def convert_video(self, progress_bar=False):
         """
         Convert videos using ffmpeg
@@ -851,9 +891,9 @@ class VideoCompress:
             self.logger.info(f'Started Conversion: {date_time}')
 
         self.converted = False
-
-        video_stream = ffmpeg.input(str(self.video_in)).video
-        audio_stream = ffmpeg.input(str(self.video_in)).audio
+        f_input = ffmpeg.input(str(self.video_in))
+        video_stream = self._get_video_stream(f_input)
+        audio_stream = f_input.audio
 
         self.converted = self._convert_with_ffmpeg(
             video_stream,
