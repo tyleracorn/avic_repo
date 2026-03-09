@@ -507,7 +507,6 @@ class VideoCompress:
 
         self.codec = self._get_video_codec(self.video_in)
 
-
         self.fl_size_bytes = 0
         self.conv_fl_size_bytes = 0
         self.conv_fl_size = "Not Converted"
@@ -636,7 +635,7 @@ class VideoCompress:
             self.video_defaults["crf"] = 18
             self.video_defaults["preset"] = "slow"
         elif video_quality == "fast":
-            self.video_defaults["crf"] = 22
+            self.video_defaults["crf"] = 24
             self.video_defaults["preset"] = "fast"
         else:
             if self._warn_msg:
@@ -865,7 +864,6 @@ class VideoCompress:
         # Common cover-art / still-image codecs
         skip_codecs = {"mjpeg", "png", "bmp", "gif", "webp"}
 
-
         for s in streams:
             if s.get("codec_type") != "video":
                 continue
@@ -877,7 +875,7 @@ class VideoCompress:
                 continue
 
             # This is the real video stream
-            return f_input[f"v:{s['index']}"]
+            return f_input[str(s['index'])]
 
         raise RuntimeError("No usable video stream found.")
 
